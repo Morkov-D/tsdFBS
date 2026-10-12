@@ -109,3 +109,22 @@ input,select,textarea{font-size:16px;min-height:52px;border-radius:12px}.card la
 .scan-focus-status{font-size:12px;font-weight:800;color:#9a6217;background:#fff4dc;border:1px solid #e8c790;padding:10px 12px;border-radius:9px;margin:10px 0}
 .scan-focus-status.ready{color:#087c57;background:#dff8ec;border-color:#3bb78c}
 #scanInput:focus{outline:3px solid #17a879;outline-offset:2px}
+
+
+/* CT48 ScanWedge Auto/keyboard: keep a live editable IME receiver out of sight. */
+.scanner-form{position:relative}
+.scan-target,.conflict-target{display:flex;align-items:center;gap:12px;min-height:106px;border:2px solid #31b294;background:#e9faf4;border-radius:13px;padding:16px;color:#0d6954}
+.scan-target b{display:block;font-size:18px}.scan-target small{display:block;font-size:12px;margin-top:5px}.scan-glyph{font-size:37px}
+.scan-target-light{margin-left:auto;flex:0 0 12px;width:12px;height:12px;background:#0eac71;border-radius:50%;box-shadow:0 0 0 5px #12ad7033}
+.scanner-form:not(.manual-mode) #scanInput,.conflict-receiver:not(.manual-mode) #conflictSearch{
+ position:absolute!important;left:10px!important;top:10px!important;
+ width:1px!important;height:1px!important;min-width:1px!important;min-height:1px!important;
+ font-size:1px!important;opacity:.01!important;padding:0!important;margin:0!important;
+ border:0!important;outline:0!important;box-shadow:none!important;overflow:hidden!important;
+ pointer-events:none!important;z-index:0!important;transform:none!important;
+}
+.scanner-form:not(.manual-mode) #scanSubmit{display:none!important}
+.scanner-form.manual-mode .scan-target,.conflict-receiver.manual-mode .conflict-target{display:none!important}
+.scanner-form.manual-mode #scanInput,.conflict-receiver.manual-mode #conflictSearch{display:block!important}
+.conflict-receiver{position:relative}.conflict-target{min-height:70px;font-size:14px;font-weight:800}
+#manualKeyboard{margin-top:10px}
