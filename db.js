@@ -115,5 +115,40 @@ window.DB = (() => {
     });
   }
 
-  return { open, get, all, put, del, replaceCatalog, commitAssembly };
+  /** Atomically archive the rejected job and enqueue a corrected replacement.
+   * Never delete original error history; never touch the active assembly draft.
+   */
+  async function resolveConflict(originalId, replacement, removed) {
+    const db=await open();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction('queue','readwrite');
+      const store=tx.objectStore('queue');
+      const read=store.get(originalId);
+      read.onsuccess=()=>{
+        try {
+          const original=read.result && read.result.value;
+          if(!original || original.status!=='ERROR')
+            throw Error('Исходная сборка не найдена или ещё не получила ошибку сервера');
+          if(replacement && (!replacement.jobId || replacement.jobId===originalId))
+            throw Error('Для оставшихся товаров требуется новый ID сборки');
+          const archive=Object.assign({},original,{
+            status:'RESOLVED',resolvedAt:new Date().toISOString(),
+            removedConflicts:removed,
+            replacementJobId:replacement?replacement.jobId:'',
+            message:replacement
+              ?'Конфликт ЧЗ разрешён сотрудником; оставшиеся позиции отправлены отдельным заданием'
+              :'Все конфликтные товары физически исключены; отправлять нечего'
+          });
+          store.put({id:originalId,value:archive});
+          if(replacement)store.put({id:replacement.jobId,value:replacement});
+        }catch(err){try{tx.abort()}catch(_){};reject(err)}
+      };
+      read.onerror=()=>reject(read.error||Error('Не удалось найти исходную сборку'));
+      tx.oncomplete=()=>resolve();
+      tx.onerror=()=>reject(tx.error||Error('Ошибка сохранения разрешённого конфликта'));
+      tx.onabort=()=>reject(tx.error||Error('Сохранение конфликта отменено'));
+    });
+  }
+
+  return { open, get, all, put, del, replaceCatalog, commitAssembly, resolveConflict };
 })();
