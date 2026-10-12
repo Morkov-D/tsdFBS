@@ -319,15 +319,91 @@ async function syncCatalog(force=false){
   await DB.replaceCatalog(snapshot);T.catalog=snapshot;buildIndexes();return true;
  }finally{stageEnd();}
 }
+
+function conflictParts(job){
+ const all=[];
+ (job.items||[]).forEach((item,i)=>(item.codes||[]).forEach((code,j)=>all.push({itemIndex:i,codeIndex:j,productId:item.productId,rawCode:code})));
+ return all;
+}
+function conflictMatches(job){
+ const conflicts=job.conflicts||[];
+ const flat=conflictParts(job);
+ return conflicts.map(c=>{
+  const match=flat.find(x=>x.itemIndex===c.itemIndex&&x.codeIndex===c.codeIndex&&x.rawCode===c.rawCode);
+  return {conflict:c,found:match};
+ });
+}
 function renderQueue(){
- const pending=T.queue.filter(x=>x.status!=='SUCCESS');$('queueCount').textContent=pending.length;
+ const pending=T.queue.filter(j=>!['SUCCESS','RESOLVED'].includes(j.status));
+ $('queueCount').textContent=pending.length;
  $('queueList').innerHTML=pending.length?pending.slice().reverse().map(j=>{
   const lk=T.catalog.lks.find(x=>x.uuid===j.lkId);
   const labels={QUEUED:'На устройстве',SENDING:'Отправляется',UNCERTAIN:'Ожидает ответа',ERROR:'Ошибка сервера'};
-  return `<div class="item job"><div><b>${escapeHtml(lk?.name||'ЛК')} · ${j.qty} шт.</b><small>${new Date(j.createdAt).toLocaleString('ru-RU')} · ${escapeHtml(j.jobId.slice(0,8))}</small><small>${escapeHtml(j.message||'Сохранено локально')}</small></div><span class="job-status ${j.status==='ERROR'?'error':j.status==='UNCERTAIN'?'unknown':''}">${escapeHtml(labels[j.status]||j.status)}</span></div>`;
- }).join(''):'<p class="muted">Очередь пуста. Все подтверждённые сборки удалены из локальной очереди.</p>';
+  const conflict=j.status==='ERROR'&&j.errorCode==='CHZ_DUPLICATES'&&j.safeToResubmit&&Array.isArray(j.conflicts)&&j.conflicts.length;
+  return '<div class="item job"><div><b>'+escapeHtml(lk?.name||'ЛК')+' · '+j.qty+' шт.</b><small>'+new Date(j.createdAt).toLocaleString('ru-RU')+' · '+escapeHtml(j.jobId.slice(0,8))+'</small><small>'+escapeHtml(j.message||'Сохранено локально')+'</small>'+
+    (conflict?'<button type="button" class="primary conflict-open" data-job="'+escapeHtml(j.jobId)+'">Найти и убрать дубли ('+j.totalConflicts+')</button>':'')+
+    '</div><span class="job-status '+(j.status==='ERROR'?'error':j.status==='UNCERTAIN'?'unknown':'')+'">'+escapeHtml(labels[j.status]||j.status)+'</span></div>';
+ }).join(''):'<p class="muted">Очередь пуста. Подтверждённые задания удалены из очереди, а разрешённые конфликты сохранены в архиве устройства.</p>';
  $('sendQueue').disabled=T.sending||pending.every(j=>j.status==='ERROR');
 }
+$('queueList').addEventListener('click',e=>{
+ const btn=e.target.closest('.conflict-open');
+ if(btn)openConflict(btn.dataset.job);
+});
+let conflictJobId='';
+function openConflict(id){
+ const job=T.queue.find(j=>j.jobId===id);
+ if(!job||job.status!=='ERROR'||job.errorCode!=='CHZ_DUPLICATES'||!job.safeToResubmit)return;
+ if(job.totalConflicts!==job.conflicts.length){message('Сервер вернул не все дубли. Требуется дополнительная проверка администратора.','bad');return;}
+ const matches=conflictMatches(job);
+ if(matches.some(x=>!x.found)){message('Невозможно однозначно сопоставить конфликт с товаром. Не списывайте вручную.','bad');return;}
+ conflictJobId=id;
+ const lk=T.catalog.lks.find(x=>x.uuid===job.lkId),wh=T.catalog.warehouses.find(x=>x.uuid===job.warehouseId);
+ $('conflictContext').textContent=(lk?.name||'ЛК')+' · '+(wh?.name||'Склад')+' · '+job.qty+' шт.';
+ $('conflictSearch').value='';
+ $('conflictList').innerHTML=matches.map((x,i)=>{
+  const p=T.byId.get(x.conflict.productId);
+  return '<div class="conflict-row" data-dm="'+escapeHtml(x.conflict.rawCode)+'"><div class="conflict-heading">Дубль '+(i+1)+' из '+matches.length+' · '+escapeHtml(x.conflict.reason==='IN_ASSEMBLY'?'Повтор внутри сборки':'Уже есть на сервере')+'</div>'+
+    '<b>'+escapeHtml(p?.article||x.conflict.article||'Товар')+'</b><small>GTIN '+escapeHtml(p?.gtin||'')+'</small>'+
+    '<code>'+escapeHtml(x.conflict.rawCode)+'</code><label class="conflict-check"><input type="checkbox" class="conflict-removed" data-index="'+i+'"> Я нашёл товар по DataMatrix и физически убрал его из сборки</label></div>';
+ }).join('');
+ $('conflictCount').textContent=matches.length+' конфликтов';
+ $('conflictOverlay').classList.remove('hidden');
+ $('conflictConfirm').disabled=true;
+ setViewportSheet();
+}
+$('conflictClose').onclick=()=>{$('conflictOverlay').classList.add('hidden');conflictJobId='';};
+$('conflictOverlay').addEventListener('change',()=>{
+ const checkboxes=[...$('conflictOverlay').querySelectorAll('.conflict-removed')];
+ $('conflictConfirm').disabled=!checkboxes.length||!checkboxes.every(x=>x.checked);
+});
+$('conflictSearch').addEventListener('input',()=>{
+ const q=$('conflictSearch').value.trim();
+ for(const row of $('conflictList').querySelectorAll('.conflict-row')){
+  row.classList.toggle('conflict-highlight',!!q&&row.dataset.dm.includes(q));
+ }
+});
+$('conflictConfirm').onclick=()=>busy($('conflictConfirm'),async()=>{
+ const job=T.queue.find(j=>j.jobId===conflictJobId);
+ if(!job||!job.safeToResubmit||job.errorCode!=='CHZ_DUPLICATES'||job.status!=='ERROR')throw Error('Сборка уже изменена. Обновите очередь.');
+ const matches=conflictMatches(job);
+ const checks=[...$('conflictList').querySelectorAll('.conflict-removed')];
+ if(!matches.length||matches.length!==job.totalConflicts||matches.some(x=>!x.found)||checks.length!==matches.length||checks.some(x=>!x.checked))
+  throw Error('Сначала найдите и физически уберите каждый конфликтный товар');
+ const removed=matches.map(x=>({itemIndex:x.conflict.itemIndex,codeIndex:x.conflict.codeIndex,rawCode:x.conflict.rawCode,productId:x.conflict.productId,confirmedBy:T.employee.id,confirmedAt:new Date().toISOString()}));
+ const drop=new Set(removed.map(x=>x.itemIndex+'|'+x.codeIndex));
+ const items=job.items.map((item,i)=>({...item,codes:item.codes.filter((code,j)=>!drop.has(i+'|'+j))}))
+  .filter(item=>item.codes.length).map(item=>({...item,qty:item.codes.length}));
+ const count=items.reduce((n,item)=>n+item.qty,0);
+ const newJob=count?{jobId:crypto.randomUUID(),employeeId:T.employee.id,lkId:job.lkId,warehouseId:job.warehouseId,items,qty:count,createdAt:new Date().toISOString(),status:'QUEUED',message:'После ручного удаления конфликтных ЧЗ из '+job.jobId.slice(0,8),parentJobId:job.jobId}:null;
+ await DB.resolveConflict(job.jobId,newJob,removed);
+ T.queue=await DB.all('queue');
+ $('conflictOverlay').classList.add('hidden');conflictJobId='';
+ renderQueue();
+ haptic([60,30,60]);playTone(true);
+ message(newJob?'Снято '+removed.length+' дублей; '+count+' шт. поставлены в очередь.':'Все товары были дублями. Сборка закрыта без списания.');
+ if(newJob&&T.session&&activeOnline())sendQueue();
+});
 $('sendQueue').onclick=()=>sendQueue();
 async function sendQueue(){
  if(T.sending)return;
@@ -335,23 +411,47 @@ async function sendQueue(){
  if(!activeOnline()){message('Нет соединения. Очередь сохранена на устройстве.','');return;}
  T.sending=true;$('sendQueue').disabled=true;
  try{
-  T.queue=await DB.all('queue');const items=T.queue.filter(j=>j.status!=='ERROR');let num=0;
+  T.queue=await DB.all('queue');
+  const items=T.queue.filter(j=>!['ERROR','RESOLVED','SUCCESS'].includes(j.status));
+  let num=0;
   for(const job of items){
-   num++;job.status='SENDING';job.message='Проверяем подтверждение на сервере';await DB.put('queue',job.jobId,job);T.queue=await DB.all('queue');renderQueue();
+   num++;
+   job.status='SENDING';job.message='Проверяем подтверждение на сервере';
+   await DB.put('queue',job.jobId,job);
+   T.queue=await DB.all('queue');renderQueue();
    stage('Передача сборки '+num+' из '+items.length+' · '+job.qty+' шт.',Math.round((num-1)/items.length*100));
    let result;
    try{result=await API.sendAssembly(T.endpoint,{action:'assembly',token:T.session,jobId:job.jobId,lkId:job.lkId,warehouseId:job.warehouseId,items:job.items});}
-   catch(e){job.status='UNCERTAIN';job.message=e.message;await DB.put('queue',job.jobId,job);message('Ответ сервера не получен: '+e.message,'bad');break;}
+   catch(e){
+    job.status='UNCERTAIN';job.message=e.message;
+    await DB.put('queue',job.jobId,job);
+    message('Нет подтверждения сервера: '+e.message,'bad');
+    break; // Could have written; stop until jobId status is known.
+   }
    if(result.status==='SUCCESS'){
-    await DB.del('queue',job.jobId);stage('Подтверждена сборка '+num+' из '+items.length,Math.round(num/items.length*100));
+    await DB.del('queue',job.jobId);
+    stage('Подтверждена сборка '+num+' из '+items.length,Math.round(num/items.length*100));
     message('Подтверждено сервером: '+job.qty+' шт. · '+job.jobId.slice(0,8));
+   }else if(result.status==='ERROR'){
+    job.status='ERROR';job.message=result.message||'Ошибка сервера';
+    if(result.errorCode==='CHZ_DUPLICATES'&&result.safeToResubmit&&Array.isArray(result.conflicts)){
+      job.errorCode=result.errorCode;job.conflicts=result.conflicts;job.totalConflicts=result.totalConflicts;job.safeToResubmit=true;
+      job.message='Обнаружено повторных кодов ЧЗ: '+job.totalConflicts+'. Откройте поиск дублей.';
+    }else{job.errorCode='';job.conflicts=[];job.safeToResubmit=false;}
+    await DB.put('queue',job.jobId,job);
+    message('Ошибка сборки '+job.jobId.slice(0,8)+': '+job.message,'bad');
+    // Known validation error before writes is isolated; continue sending OTHER jobs.
    }else{
-    job.status=result.status==='ERROR'?'ERROR':'UNCERTAIN';job.message=result.message||'Нет ответа сервера';await DB.put('queue',job.jobId,job);
-    message(job.status==='ERROR'?'Ошибка сборки: '+job.message+'. Проверьте журнал операций перед исправлением!':'Сервер пока не подтвердил сборку; она остаётся в очереди.',job.status==='ERROR'?'bad':'');
+    job.status='UNCERTAIN';job.message=result.message||'Нет подтверждения';
+    await DB.put('queue',job.jobId,job);
+    message('Сборка '+job.jobId.slice(0,8)+' пока не подтверждена, повторно сканировать её нельзя.','bad');
     break;
    }
   }
- }finally{stageEnd();T.queue=await DB.all('queue');if(!$('homeView').classList.contains('hidden'))renderQueue();T.sending=false;$('sendQueue').disabled=false;if(!$('homeView').classList.contains('hidden'))renderQueue();}
+ }finally{
+  stageEnd();T.queue=await DB.all('queue');T.sending=false;
+  if(!$('homeView').classList.contains('hidden'))renderQueue();
+ }
 }
 
 // Camera scanning is optional. Hardware TSD scanners work as keyboard input + Enter.
