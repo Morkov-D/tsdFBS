@@ -1,4 +1,4 @@
-<!doctype html><html lang="ru" translate="no"><head><meta charset="utf-8"><meta name="google" content="notranslate"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#14213d"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="./icons/icon192.png"><link rel="manifest" href="./manifest.webmanifest"><link rel="stylesheet" href="./styles.css?v=2.1.3"><title>StockFlow ТСД · CT48</title></head>
+<!doctype html><html lang="ru" translate="no"><head><meta charset="utf-8"><meta name="google" content="notranslate"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#14213d"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="./icons/icon192.png"><link rel="manifest" href="./manifest.webmanifest"><link rel="stylesheet" href="./styles.css?v=2.1.4"><title>StockFlow ТСД · CT48</title></head>
 <body><div class="app"><header class="header"><div class="logo">S</div><div><strong>StockFlow <span>ТСД</span></strong><small>Сборка и маркировка</small></div><div class="connection" id="connection">● В сети</div></header>
 <div id="alerts" role="status" aria-live="polite"></div>
 <div id="startupStatus" role="status" aria-live="assertive" style="margin:12px auto;padding:12px 16px;border-radius:12px;background:#e9f0fa;color:#14213d;font:600 14px system-ui">Загрузка терминала и локальной базы…</div>
@@ -15,12 +15,31 @@
     <button id="conflictClose" class="ghost icon-close" type="button" aria-label="Закрыть">✕</button></div>
   <p id="conflictContext" class="small-note"></p>
   <p class="small-note">Найдите каждый товар по DataMatrix, <b>физически удалите его из собираемой партии</b> и отметьте подтверждение. Остальные товары отправятся отдельной сборкой. Исходная ошибка сохранится.</p>
-  <label for="conflictSearch">Поиск по DataMatrix</label>
-  <input id="conflictSearch" autocomplete="off" spellcheck="false" placeholder="Сканируйте или введите код">
+  <label for="conflictSearch">Сканируйте DataMatrix товара-дубля</label>
+  <input id="conflictSearch" inputmode="none" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Ожидание сканирования ЧЗ…">
+  <div class="conflict-controls"><button type="button" class="ghost" id="conflictKeyboard">⌨ Ручной ввод</button><button type="button" class="primary" id="conflictVerify">Проверить код</button></div>
+  <div class="conflict-feedback" id="conflictFeedback" role="status" aria-live="polite">Отсканируйте проблемный код ЧЗ</div>
   <b id="conflictCount" class="conflict-count"></b>
   <div id="conflictList" class="conflict-list"></div>
-  <button class="primary full" id="conflictConfirm" type="button" disabled>Подтвердить удаление и отправить остальные</button>
+  <p class="small-note">Отправка остальных товаров начнётся автоматически после подтверждения каждого дубля.</p>
  </div>
+</div>
+<div id="conflictConfirmOverlay" class="sheet-overlay hidden conflict-confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="conflictConfirmTitle">
+  <div class="finish-sheet">
+   <div class="confirm-emblem">⚠</div>
+   <h2 id="conflictConfirmTitle">Дубль ЧЗ обнаружен</h2>
+   <p class="confirm-description">Этот DataMatrix уже содержится в системе или повторяется в сборке.</p>
+   <div class="confirm-summary">
+    <div><span>Товар</span><b id="conflictProduct">—</b></div>
+    <div><span>Маркировка</span><b id="conflictGtin">—</b></div>
+   </div>
+   <code class="conflict-code-preview" id="conflictMatrix">—</code>
+   <p class="conflict-remove-warning">Уберите именно этот товар из физической сборки. Нажимая подтверждение, вы подтверждаете фактическое удаление.</p>
+   <div class="confirm-actions">
+    <button type="button" class="ghost" id="conflictCancelRemove">Отмена</button>
+    <button type="button" class="primary" id="conflictConfirmRemove">Товар убран</button>
+   </div>
+  </div>
 </div>
 <div id="screenFlash" class="screen-flash" aria-hidden="true"></div>
 <footer>Черновики и очередь хранятся локально в IndexedDB. В Google Таблицы данные попадут после подтверждения сервером.</footer></div>
@@ -48,6 +67,6 @@
   window.stockflowBootError = showError;
 })();
 </script>
-<script src="./db.js?v=2.1.3"></script>
-<script src="./api.js?v=2.1.3"></script>
-<script src="./app.js?v=2.1.3"></script></body></html>
+<script src="./db.js?v=2.1.4"></script>
+<script src="./api.js?v=2.1.4"></script>
+<script src="./app.js?v=2.1.4"></script></body></html>
