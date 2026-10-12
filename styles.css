@@ -104,3 +104,8 @@ input,select,textarea{font-size:16px;min-height:52px;border-radius:12px}.card la
 .conflict-confirm-overlay{z-index:145}
 .conflict-done{border-left-color:#16a273;background:#f0fff6}
 .conflict-done .conflict-heading{color:#127b57}
+
+
+.scan-focus-status{font-size:12px;font-weight:800;color:#9a6217;background:#fff4dc;border:1px solid #e8c790;padding:10px 12px;border-radius:9px;margin:10px 0}
+.scan-focus-status.ready{color:#087c57;background:#dff8ec;border-color:#3bb78c}
+#scanInput:focus{outline:3px solid #17a879;outline-offset:2px}
