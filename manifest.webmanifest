@@ -1,1 +1,20 @@
-{"name":"StockFlow — Терминал сборки","short_name":"StockFlow ТСД","description":"Офлайн-сборка товара и сканирование ЧЗ","start_url":"./index.html","scope":"./","display":"standalone","background_color":"#f6f8fc","theme_color":"#152441","lang":"ru","icons":[{"src":"./icons/icon192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},{"src":"./icons/icon512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}]}
+{
+  "name": "StockFlow ТСД · Urovo CT48",
+  "short_name": "StockFlow",
+  "description": "Офлайн-сборка товара и сканирование ЧЗ",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0e243d",
+  "theme_color": "#134a67",
+  "lang": "ru",
+  "icons": [
+    {
+      "src": "./icons/stockflow.svg?v=2.1.5",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "id": "./"
+}
