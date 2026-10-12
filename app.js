@@ -158,7 +158,7 @@ function renderAssembly(){if(!T.draft)return;const lk=T.catalog.lks.find(x=>x.uu
   $('scanTitle').textContent=stage==='barcode'?'Штрихкод товара':'DataMatrix ЧЗ';
   const product=T.byId.get(T.draft.pendingProductId);
   $('scanHelp').textContent=stage==='barcode'?'Сканируйте ШК сразу — ввод и переход к ЧЗ автоматические.':`Товар: ${product?.article||'Не найден'}. Отсканируйте код ЧЗ.`;
-  $('scanInput').value='';$('scanInput').placeholder=stage==='barcode'?'ШК товара…':'GS1 DataMatrix…';$('scanCard').dataset.stage=stage;
+  $('scanInput').value='';$('scanInput').placeholder=stage==='barcode'?'ШК товара…':'GS1 DataMatrix…';$('scanTargetLabel').textContent=stage==='barcode'?'Ожидание штрихкода':'Ожидание DataMatrix ЧЗ';$('scanCard').dataset.stage=stage;
   $('scanStepOne').classList.toggle('done',stage==='dm');$('scanStepTwo').classList.toggle('active',stage==='dm');
   const ag={};codes.forEach(s=>{ag[s.productId]=(ag[s.productId]||0)+1;});const entries=Object.entries(ag);$('scanSummary').textContent=entries.length+' артикулов';
   $('scanHistory').innerHTML=entries.length?entries.slice(-24).reverse().map(([id,n])=>{const p=T.byId.get(id);return `<div class="item"><div><b>${escapeHtml(p?.article||'Неизвестный товар')}</b><small>${escapeHtml(p?.gtin||'')}</small></div><span>${n} шт.</span></div>`;}).join('')+(entries.length>24?`<p class="muted">Показаны 24 из ${entries.length} артикулов</p>`:''):'<p class="muted">Здесь появятся отсканированные товары</p>';
@@ -167,6 +167,12 @@ function renderAssembly(){if(!T.draft)return;const lk=T.catalog.lks.find(x=>x.uu
 /* Urovo CT48 keyboard-wedge input: Enter/Tab may precede input/IME text.
  * Do not treat an empty Enter as a scanned DataMatrix. */
 const scanIO={inputTimer:0,emptyTimer:0,pending:[],composing:false,manual:false,focusTimer:0};
+function updateScanMode(){
+ $('scanForm').classList.toggle('manual-mode',scanIO.manual);
+ $('manualKeyboard').textContent=scanIO.manual?'↩ Вернуться к сканеру':'⌨ Ручной ввод';
+ $('scanInput').inputMode='text';
+ if(!scanIO.manual)requestAnimationFrame(focusScanner);
+}
 function scanScreenActive(){
   return !!T.draft && !$('assemblyView').classList.contains('hidden')
     && $('pickerOverlay').classList.contains('hidden')
@@ -249,13 +255,7 @@ document.addEventListener('keydown',e=>{
   }
 },true);
 $('manualKeyboard').onclick=()=>{
-  armAudio();
-  const input=$('scanInput');
-  scanIO.manual=!scanIO.manual;
-  input.inputMode=scanIO.manual?'text':'none';
-  $('manualKeyboard').textContent=scanIO.manual?'Скрыть клавиатуру ТСД':'⌨ Ручной ввод / клавиатура';
-  clearScanTimers();
-  focusScanner();
+ armAudio();scanIO.manual=!scanIO.manual;clearScanTimers();updateScanMode();focusScanner();
 };
 $('assemblyView').addEventListener('click',e=>{if(e.target.closest('button,a,video'))return;focusScanner();});
 async function acceptScan(value){if(T.scanBusy)return;T.scanBusy=true;try{
@@ -402,7 +402,8 @@ function openConflict(id){
  $('conflictOverlay').classList.remove('hidden');
  $('conflictConfirmOverlay').classList.add('hidden');
  conflictManual=false;
- $('conflictSearch').inputMode='none';
+ $('conflictSearch').inputMode='text';
+ $('conflictReceiver').classList.remove('manual-mode');
  $('conflictKeyboard').textContent='⌨ Ручной ввод';
  $('conflictSearch').value='';
  renderConflictRows(job);
@@ -514,8 +515,9 @@ document.addEventListener('keydown',e=>{
 },true);
 $('conflictKeyboard').onclick=()=>{
  conflictManual=!conflictManual;
- $('conflictSearch').inputMode=conflictManual?'text':'none';
- $('conflictKeyboard').textContent=conflictManual?'Скрыть клавиатуру':'⌨ Ручной ввод';
+ $('conflictSearch').inputMode='text';
+ $('conflictReceiver').classList.toggle('manual-mode',conflictManual);
+ $('conflictKeyboard').textContent=conflictManual?'↩ Вернуться к сканеру':'⌨ Ручной ввод';
  focusConflictScanner();
 };
 $('conflictVerify').onclick=()=>void verifyConflictScan();
