@@ -1,0 +1,37 @@
+<!doctype html><html lang="ru" translate="no"><head><meta charset="utf-8"><meta name="google" content="notranslate"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#14213d"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="./icons/icon192.png"><link rel="manifest" href="./manifest.webmanifest"><link rel="stylesheet" href="./styles.css"><title>StockFlow ТСД</title></head>
+<body><div class="app"><header class="header"><div class="logo">S</div><div><strong>StockFlow <span>ТСД</span></strong><small>Сборка и маркировка</small></div><div class="connection" id="connection">● В сети</div></header>
+<div id="alerts" role="status" aria-live="polite"></div>
+<div id="startupStatus" role="status" aria-live="assertive" style="margin:12px auto;padding:12px 16px;border-radius:12px;background:#e9f0fa;color:#14213d;font:600 14px system-ui">Загрузка терминала и локальной базы…</div>
+<div id="workProgress" class="work-progress hidden" role="status" aria-live="polite"><div><span class="spinner"></span><b id="workProgressLabel">Загрузка…</b><small id="workProgressValue">0%</small></div><div class="meter"><div id="workProgressFill"></div></div></div>
+<section id="setupView" class="screen hidden"><div class="card"><div class="overline">ПЕРВОЕ ПОДКЛЮЧЕНИЕ</div><h1>Адрес сервера</h1><p>Укажите опубликованную ссылку Google Apps Script, оканчивающуюся на <code>/exec</code>.</p><form id="setupForm"><label for="endpoint">URL веб-приложения</label><textarea id="endpoint" rows="3" required spellcheck="false" placeholder="https://script.google.com/macros/s/.../exec"></textarea><button class="primary full">Сохранить адрес</button></form></div></section>
+<section id="loginView" class="screen hidden"><div class="card"><div class="overline">ДОСТУП СОТРУДНИКА</div><h1>Вход в терминал</h1><p>Введите свой ID. При первом входе необходим интернет для проверки доступа и загрузки справочников.</p><form id="loginForm"><label for="employeeId">ID сотрудника</label><input id="employeeId" required autocomplete="username" placeholder="Введите ID"><button class="primary full">Войти</button></form><button id="changeEndpoint" class="link-btn">Изменить URL сервера</button></div></section>
+<section id="homeView" class="screen hidden"><div class="home-intro"><div class="overline">РАБОЧЕЕ МЕСТО</div><h1>Сборка товаров</h1><p>Быстрое сканирование, проверка GTIN и отправка ЧЗ</p></div><div class="strip"><div><small>Сотрудник</small><b id="userName"></b></div><button class="ghost small" id="logout">Выйти</button></div><div class="card"><div class="overline">НОВАЯ СБОРКА</div><h2>Выберите параметры</h2><label>Личный кабинет</label><input id="lkLookup" list="lkData" placeholder="Начните вводить ЛК"><datalist id="lkData"></datalist><label>Склад списания</label><select id="warehouse"></select><button class="primary full" id="beginAssembly">Начать сборку</button></div><div class="card"><div class="card-title"><h2>Синхронизация</h2><span id="cachedAt" class="muted small"></span></div><p id="cacheStats" class="muted">Справочники не загружены</p><button class="ghost full" id="syncCatalog">↻ Обновить справочники</button></div><div class="card"><div class="card-title"><h2>Очередь отправки</h2><span class="pill" id="queueCount">0</span></div><div id="queueList" class="stack"></div><button class="ghost full" id="sendQueue">↑ Отправить очередь</button></div></section>
+<section id="assemblyView" class="screen hidden"><div class="strip"><div><small>Активная сборка</small><b id="assemblyTitle"></b></div><span class="pill" id="assemblyCount">0 шт.</span></div><div class="card scan-card" id="scanCard" data-stage="barcode"><div class="scan-stage"><span id="scanStageCount">01 / 02</span><span class="stage-dot" id="scanIndicator">●</span></div><div class="scan-steps"><span id="scanStepOne" class="active">1 · Штрихкод</span><span id="scanStepTwo">2 · DataMatrix</span></div><h1 id="scanTitle">Штрихкод товара</h1><p id="scanHelp">Отсканируйте товар сканером или введите ШК вручную.</p><form id="scanForm"><input id="scanInput" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" autofocus placeholder="Ожидание сканирования..."><button class="primary full">Подтвердить скан / Enter</button></form><button class="ghost full" id="cameraBtn">⌗ Открыть камеру (если поддерживается)</button><div id="cameraBox" class="hidden"><video id="cameraVideo" autoplay playsinline muted></video><button class="ghost full" id="cameraStop">Закрыть камеру</button></div></div><div class="card"><div class="card-title"><h2>Отсканировано</h2><span id="scanSummary" class="muted">0 позиций</span></div><div id="scanHistory" class="stack"></div></div><div class="bottom-actions"><button class="ghost" id="backHome">Назад</button><button class="primary" id="finishAssembly">Закрыть сборку</button></div></section>
+<footer>Черновики и очередь хранятся локально в IndexedDB. В Google Таблицы данные попадут после подтверждения сервером.</footer></div>
+<script>
+// Display a visible error instead of leaving the operator on a white screen.
+(function () {
+  function showError(message) {
+    var node = document.getElementById('startupStatus');
+    if (!node) return;
+    node.style.background = '#ffe9e5';
+    node.style.color = '#8f201a';
+    node.textContent = 'Ошибка запуска ТСД: ' + message + '. Не очищайте данные сайта: там могут храниться сборки.';
+  }
+  window.addEventListener('error', function (event) {
+    showError(event.message || 'Не удалось загрузить скрипт');
+  });
+  window.addEventListener('unhandledrejection', function (event) {
+    var reason = event.reason;
+    showError((reason && reason.message) || String(reason || 'Ошибка фоновой операции'));
+  });
+  window.stockflowBootReady = function () {
+    var node = document.getElementById('startupStatus');
+    if (node) node.hidden = true;
+  };
+  window.stockflowBootError = showError;
+})();
+</script>
+<script src="./db.js?v=2.0.4"></script>
+<script src="./api.js?v=2.0.4"></script>
+<script src="./app.js?v=2.0.4"></script></body></html>

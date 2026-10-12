@@ -1,0 +1,34 @@
+ВОССТАНОВЛЕНИЕ StockFlow ТСД — версия 2.0.4
+Сайт: https://morkov-d.github.io/tsdFBS/
+Репозиторий: https://github.com/Morkov-D/tsdFBS
+
+ПРИЧИНА:
+В GitHub файлы перепутались: index.html содержит код db.js;
+db.js содержит app.js; app.js содержит api.js; api.js содержит инструкцию;
+sw.js содержит CSS; styles.css содержит manifest.json;
+manifest.webmanifest содержит HTML главной страницы.
+
+ВАЖНО: НЕ удаляйте данные сайта / IndexedDB! Там могут быть неотправленные сборки.
+База stockflow-tsd-v1, её версия и ключи хранилищ не изменены.
+
+КАК ВОССТАНОВИТЬ:
+1. Распакуйте ZIP на компьютере. Сам ZIP загружать на GitHub НЕ нужно.
+2. Откройте репозиторий Morkov-D/tsdFBS -> Code -> Add file -> Upload files.
+3. Перетащите файлы из распакованной папки в КОРЕНЬ репозитория:
+   index.html, app.js, api.js, db.js, sw.js, styles.css,
+   manifest.webmanifest, .nojekyll. Подтвердите замену файлов.
+4. Убедитесь, что изображения лежат именно в icons/icon192.png
+   и icons/icon512.png. Если уже есть правильные, повторно добавлять не нужно.
+5. Commit changes -> дождитесь завершения GitHub Pages deploy.
+6. Откройте https://morkov-d.github.io/tsdFBS/ и проверьте страницу.
+   Для обновления PWA закройте и снова откройте приложение, обновите страницу.
+7. Если страница по-прежнему показывает JavaScript, проверьте ссылку
+   https://github.com/Morkov-D/tsdFBS/blob/main/index.html — там должен быть
+   <!doctype html>, а не /* StockFlow TSD IndexedDB */.
+
+При возникновении проблем используйте браузер на устройстве, где хранятся
+черновики, и НЕ очищайте данные сайта. Можно проверить URL с параметром
+?restore=204, чтобы избежать кэширования HTTP, но Service Worker также
+может требовать повторного открытия приложения.
+
+GOOGLE APPS SCRIPT И GOOGLE SHEETS НЕ ИЗМЕНЯЕМ.
