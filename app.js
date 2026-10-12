@@ -1,10 +1,48 @@
 'use strict';
-const T={endpoint:'',session:null,employee:null,catalog:{lks:[],warehouses:[],products:[],savedAt:''},draft:null,queue:[],sending:false,cameraStream:null,cameraTimer:null,cameraBusy:false,scanBusy:false,byId:new Map(),byBarcode:new Map(),scanCodes:new Set()};
+const T={endpoint:'',session:null,employee:null,catalog:{lks:[],warehouses:[],products:[],savedAt:''},draft:null,queue:[],sending:false,cameraStream:null,cameraTimer:null,cameraBusy:false,scanBusy:false,pickerOptions:[],feedbackTimer:null,audio:null,byId:new Map(),byBarcode:new Map(),scanCodes:new Set()};
 const $=id=>document.getElementById(id);
 function stage(label,percent){const box=$('workProgress');box.classList.remove('hidden');$('workProgressLabel').textContent=label;$('workProgressValue').textContent=percent==null?'Синхронизация…':percent+'%';$('workProgressFill').style.width=percent==null?'35%':percent+'%';$('workProgressFill').classList.toggle('moving',percent==null);}
 function stageEnd(){const box=$('workProgress');if(box)box.classList.add('hidden');}
 function buildIndexes(){T.byId=new Map();T.byBarcode=new Map();(T.catalog.products||[]).forEach(p=>{T.byId.set(p.uuid,p);(p.barcodes||[]).forEach(code=>{const key=p.lkId+'|'+String(code);const arr=T.byBarcode.get(key)||[];arr.push(p);T.byBarcode.set(key,arr);});});T.scanCodes=new Set(T.draft?.scans?.map(x=>x.dm)||[]);}
-function focusScanner(){if(!$('assemblyView').classList.contains('hidden')){const input=$('scanInput');if(document.activeElement!==input){input.focus({preventScroll:true});}}}
+
+function focusScanner() {
+  if($('assemblyView').classList.contains('hidden') || !$('pickerOverlay').classList.contains('hidden') || !$('finishOverlay').classList.contains('hidden')) return;
+  const input=$('scanInput');
+  if(document.activeElement!==input){ try{ input.focus({preventScroll:true}); }catch(_){ input.focus(); } }
+}
+function haptic(pattern){try{if(navigator.vibrate)navigator.vibrate(pattern);}catch(_){}}
+function armAudio() {
+  try{
+    const C=window.AudioContext||window.webkitAudioContext;
+    if(C&&!T.audio)T.audio=new C();
+    if(T.audio&&T.audio.state==='suspended')T.audio.resume().catch(()=>{});
+  }catch(_){}
+}
+function playTone(ok){
+  try{
+    if(!T.audio)armAudio();if(!T.audio||T.audio.state!=='running')return;
+    const start=T.audio.currentTime+.008,osc=T.audio.createOscillator(),gain=T.audio.createGain();
+    osc.type=ok?'sine':'square';
+    osc.frequency.setValueAtTime(ok?1050:230,start);
+    if(!ok)osc.frequency.exponentialRampToValueAtTime(145,start+.19);
+    gain.gain.setValueAtTime(.0001,start);
+    gain.gain.exponentialRampToValueAtTime(ok?.12:.19,start+.018);
+    gain.gain.exponentialRampToValueAtTime(.0001,start+(ok?.10:.29));
+    osc.connect(gain);gain.connect(T.audio.destination);osc.start(start);osc.stop(start+(ok?.12:.32));
+  }catch(_){}
+}
+function scanSignal(ok,text){
+  $('scanFeedback').className='scan-feedback '+(ok?'success':'failure');
+  $('scanFeedbackIcon').textContent=ok?'✓':'!';
+  $('scanFeedbackText').textContent=text;
+  $('scanCard').classList.remove('state-good','state-error');
+  $('scanCard').classList.add(ok?'state-good':'state-error');
+  $('screenFlash').className='screen-flash '+(ok?'flash-good':'flash-error');
+  haptic(ok?[55]:[140,65,190]);playTone(ok);
+  clearTimeout(T.feedbackTimer);
+  T.feedbackTimer=setTimeout(()=>{$('scanCard').classList.remove('state-good','state-error');$('screenFlash').className='screen-flash';},650);
+}
+
 
 const escapeHtml=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function view(id){['setupView','loginView','homeView','assemblyView'].forEach(x=>$(x).classList.toggle('hidden',x!==id));}
@@ -12,14 +50,71 @@ function message(text,type='good'){const area=$('alerts');area.innerHTML=`<div c
 function busy(button,cb){if(button.disabled)return;button.disabled=true;const original=button.dataset.label||button.textContent;button.dataset.label=original;button.textContent='⏳ Выполняется…';Promise.resolve().then(cb).catch(e=>{console.error(e);message(e.message||String(e),'bad');}).finally(()=>{button.disabled=false;button.textContent=original;});}
 function activeOnline(){return navigator.onLine;}
 function showConnection(){$('connection').classList.toggle('offline',!activeOnline());$('connection').textContent=activeOnline()?'● В сети':'● Офлайн';$('connection').title=activeOnline()?'Сеть доступна':'Нет сети: очередь сохранится';}
-const lkLabel=lk=>`${lk.name} · ${lk.marketplace} · ${lk.externalId}`;
-function selectedLK(){const value=$('lkLookup').value;return T.catalog.lks.find(x=>lkLabel(x)===value);}
+
+const lkLabel=lk=>(lk.name||'ЛК')+' · '+(lk.marketplace||'')+' · '+(lk.externalId||'');
+function setViewportSheet(){
+  const vp=window.visualViewport;
+  document.documentElement.style.setProperty('--sheet-height',(vp?vp.height:window.innerHeight)+'px');
+  document.documentElement.style.setProperty('--sheet-top',(vp?vp.offsetTop:0)+'px');
+}
+if(window.visualViewport){window.visualViewport.addEventListener('resize',setViewportSheet);window.visualViewport.addEventListener('scroll',setViewportSheet);}
+window.addEventListener('resize',setViewportSheet);
+function closePicker(){ $('pickerOverlay').classList.add('hidden'); $('pickerSearch').blur();setViewportSheet(); }
+function showLKPicker(){
+  const options=(T.catalog.lks||[]).map(lk=>({
+    id:lk.uuid,
+    title:lk.name||lk.externalId||'Без названия',
+    subtitle:[lk.marketplace,lk.externalId?'ID '+lk.externalId:'',lk.legalEntity,lk.inn?'ИНН '+lk.inn:''].filter(Boolean).join(' · '),
+    search:[lk.name,lk.marketplace,lk.externalId,lk.legalEntity,lk.inn].filter(Boolean).join(' ')
+  })).sort((a,b)=>a.title.localeCompare(b.title,'ru'));
+  if(!options.length)throw Error('Нет личных кабинетов. Обновите справочники.');
+  T.pickerOptions=options;
+  $('pickerTitle').textContent='Выберите ЛК';
+  $('pickerStep').textContent='НОВАЯ СБОРКА';
+  $('pickerHint').textContent='Юрлицо и ИНН определяются автоматически по выбранному ЛК.';
+  $('pickerSearch').value=''; $('pickerOverlay').classList.remove('hidden');
+  setViewportSheet();renderPickerItems();
+}
+function renderPickerItems(){
+  const q=$('pickerSearch').value.trim().toLowerCase();
+  const found=T.pickerOptions.filter(o=>(o.title+' '+o.subtitle+' '+o.search).toLowerCase().includes(q));
+  $('pickerItems').innerHTML=found.length?found.slice(0,160).map(o=>
+    '<button type="button" class="picker-item" data-id="'+escapeHtml(o.id)+'">'+
+    '<span class="picker-label">'+escapeHtml(o.title)+'</span>'+
+    '<span class="picker-sub">'+escapeHtml(o.subtitle)+'</span>'+
+    '<span class="picker-arrow">›</span></button>'
+  ).join(''):'<p class="picker-empty">Нет совпадений. Уточните поиск.</p>';
+}
+$('pickerSearch').addEventListener('input',renderPickerItems);
+$('pickerItems').addEventListener('click',async e=>{
+  const button=e.target.closest('[data-id]');if(!button||T.draft)return;
+  const item=T.pickerOptions.find(o=>o.id===button.dataset.id);if(!item)return;
+  button.disabled=true;
+  try{await beginDraft(item.id);closePicker();}
+  catch(err){button.disabled=false;message(err.message,'bad');haptic([150,70,170]);}
+});
+$('pickerClose').onclick=closePicker;
+$('pickerOverlay').addEventListener('click',e=>{if(e.target===$('pickerOverlay'))closePicker();});
+async function beginDraft(lkId){
+  const warehouseId=$('warehouse').value;
+  if(!warehouseId)throw Error('Не выбран склад');
+  const lk=T.catalog.lks.find(x=>x.uuid===lkId);
+  if(!lk)throw Error('ЛК отсутствует в справочнике');
+  if(!lk.inn||!lk.legalEntity)throw Error('У выбранного ЛК не заполнены юрлицо или ИНН. Заполните их в карточке ЛК.');
+  T.draft={lkId:lk.uuid,warehouseId,stage:'barcode',pendingProductId:null,scans:[],createdAt:new Date().toISOString()};
+  T.scanCodes=new Set();
+  await DB.put('draft','current',T.draft);
+  localStorage.setItem('stockflow_last_lk',lk.uuid);
+  localStorage.setItem('stockflow_last_warehouse',warehouseId);
+  view('assemblyView');renderAssembly();
+  message('Сборка открыта: '+lk.name+' · '+lk.legalEntity);
+}
 function isGTINValid(gtin){if(!/^\d{14}$/.test(gtin))return false;let sum=0;for(let i=0;i<13;i++)sum+=Number(gtin[i])*(i%2===0?3:1);return (10-sum%10)%10===Number(gtin[13]);}
 function parseDM(value){const code=String(value||'').replace(/^\]d2/,'');const m=code.match(/^01(\d{14})21([^\x1d]{1,20})(?:\x1d|$)/);if(!m)throw Error('Не распознан DataMatrix: нужны AI 01 + GTIN и AI 21 + серия. Проверьте настройки сканера (разделитель GS).');if(!isGTINValid(m[1]))throw Error('Ошибка контрольной цифры GTIN в ЧЗ');return {raw:code,gtin:m[1],serial:m[2]};}
 async function start(){await DB.open();T.endpoint=localStorage.getItem('stockflow_endpoint')||'';T.catalog=await DB.get('catalog','snapshot')||T.catalog;T.draft=await DB.get('draft','current')||null;T.queue=await DB.all('queue');buildIndexes();$('employeeId').value=localStorage.getItem('stockflow_employee')||'';showConnection();if(T.endpoint)view('loginView');else view('setupView');}
 $('setupForm').onsubmit=e=>{e.preventDefault();const url=$('endpoint').value.trim();let u;try{u=new URL(url);}catch(e){return message('Некорректный URL','bad');}if(u.protocol!=='https:'||u.hostname!=='script.google.com'||!/^\/macros\/s\/[^/]+\/exec$/.test(u.pathname))return message('Нужна опубликованная HTTPS-ссылка Apps Script, оканчивающаяся на /exec','bad');T.endpoint=u.origin+u.pathname;localStorage.setItem('stockflow_endpoint',T.endpoint);view('loginView');message('Адрес сервера сохранён');};
 $('changeEndpoint').onclick=()=>{$('endpoint').value=T.endpoint;view('setupView');};
-$('loginForm').onsubmit=e=>{e.preventDefault();busy($('loginForm').querySelector('button'),async()=>{
+$('loginForm').onsubmit=e=>{e.preventDefault();armAudio();busy($('loginForm').querySelector('button'),async()=>{
   const id=$('employeeId').value.trim();if(!id)throw Error('Введите ID сотрудника');
   try{const response=await API.jsonp(T.endpoint,{op:'login',employeeId:id});T.session=response.token;T.employee=response.employee;localStorage.setItem('stockflow_employee',id);await DB.put('meta','lastEmployee',T.employee);
     try{await syncCatalog();}catch(err){message('Вход выполнен, но обновить справочники не удалось: '+err.message,'bad');}
@@ -28,22 +123,29 @@ $('loginForm').onsubmit=e=>{e.preventDefault();busy($('loginForm').querySelector
 });};
 function afterLogin(){$('userName').textContent=`${T.employee.name} · ${T.employee.id}`;buildIndexes();if(T.draft){view('assemblyView');renderAssembly();}else{view('homeView');renderHome();}if(activeOnline()&&T.session)sendQueue();}
 $('logout').onclick=()=>{T.employee=null;T.session=null;view('loginView');};
-function renderHome(){$('lkData').innerHTML=T.catalog.lks.map(lk=>`<option value="${escapeHtml(lkLabel(lk))}"></option>`).join('');
-  $('warehouse').innerHTML=T.catalog.warehouses.map(w=>`<option value="${escapeHtml(w.uuid)}">${escapeHtml(w.name)}</option>`).join('');
-  const saved=localStorage.getItem('stockflow_last_lk'),wh=localStorage.getItem('stockflow_last_warehouse');
-  if(saved){const lk=T.catalog.lks.find(l=>l.uuid===saved);if(lk)$('lkLookup').value=lkLabel(lk);}
-  if(wh&&T.catalog.warehouses.some(w=>w.uuid===wh))$('warehouse').value=wh;
-  $('beginAssembly').textContent=T.draft?'Вернуться к сборке':'Начать сборку';
-  $('cacheStats').textContent=`ЛК: ${T.catalog.lks.length} · Товаров: ${T.catalog.products.length} · Складов: ${T.catalog.warehouses.length}`;
-  $('cachedAt').textContent=T.catalog.savedAt?new Date(T.catalog.savedAt).toLocaleString('ru-RU'):'Не загружено';renderQueue();}
-$('beginAssembly').onclick=()=>busy($('beginAssembly'),async()=>{
-  if(T.draft){view('assemblyView');renderAssembly();return;}
-  const lk=selectedLK();if(!lk)throw Error('Выберите ЛК из подсказок');const warehouseId=$('warehouse').value;if(!warehouseId)throw Error('Не выбран склад');
-  
-  T.draft={lkId:lk.uuid,warehouseId,stage:'barcode',pendingProductId:null,scans:[],createdAt:new Date().toISOString()};T.scanCodes=new Set();await DB.put('draft','current',T.draft);
-  localStorage.setItem('stockflow_last_lk',lk.uuid);localStorage.setItem('stockflow_last_warehouse',warehouseId);view('assemblyView');renderAssembly();
-});
-function renderAssembly(){if(!T.draft)return;const lk=T.catalog.lks.find(x=>x.uuid===T.draft.lkId);$('assemblyTitle').textContent=lk?lk.name:'ЛК';const codes=T.draft.scans;const stage=T.draft.stage;
+
+function renderHome(){
+  const warehouse=$('warehouse'),previous=localStorage.getItem('stockflow_last_warehouse');
+  warehouse.innerHTML='<option value="">Выберите склад…</option>'+(T.catalog.warehouses||[]).map(w=>
+     '<option value="'+escapeHtml(w.uuid)+'">'+escapeHtml(w.name)+'</option>'
+  ).join('');
+  if(previous&&T.catalog.warehouses.some(w=>w.uuid===previous))warehouse.value=previous;
+  $('beginAssembly').textContent=T.draft?'Вернуться к сборке':'Начать сборку →';
+  $('cacheStats').textContent='ЛК: '+T.catalog.lks.length+' · Товаров: '+T.catalog.products.length+' · Складов: '+T.catalog.warehouses.length;
+  $('cachedAt').textContent=T.catalog.savedAt?new Date(T.catalog.savedAt).toLocaleString('ru-RU'):'Не загружено';
+  renderQueue();
+}
+$('warehouse').addEventListener('change',()=>{if($('warehouse').value)localStorage.setItem('stockflow_last_warehouse',$('warehouse').value);});
+$('beginAssembly').onclick=()=>{
+  armAudio();
+  try{
+    if(T.draft){view('assemblyView');renderAssembly();return;}
+    if(!$('warehouse').value)throw Error('Сначала выберите склад');
+    localStorage.setItem('stockflow_last_warehouse',$('warehouse').value);
+    showLKPicker();
+  }catch(e){message(e.message,'bad');haptic([140,65,190]);}
+};
+function renderAssembly(){if(!T.draft)return;const lk=T.catalog.lks.find(x=>x.uuid===T.draft.lkId);$('assemblyTitle').textContent=lk?lk.name+' · '+(lk.legalEntity||''):'ЛК';const codes=T.draft.scans;const stage=T.draft.stage;
   $('assemblyCount').textContent=codes.length+' шт.';$('scanStageCount').textContent=stage==='barcode'?'01 / 02':'02 / 02';
   $('scanTitle').textContent=stage==='barcode'?'Штрихкод товара':'DataMatrix ЧЗ';
   const product=T.byId.get(T.draft.pendingProductId);
@@ -55,33 +157,59 @@ function renderAssembly(){if(!T.draft)return;const lk=T.catalog.lks.find(x=>x.uu
   requestAnimationFrame(focusScanner);
 }
 $('scanForm').onsubmit=e=>{e.preventDefault();acceptScan($('scanInput').value);};
-$('scanInput').addEventListener('keydown',e=>{if(e.key==='Tab'&&$('scanInput').value){e.preventDefault();acceptScan($('scanInput').value);}});
+$('scanInput').addEventListener('keydown',e=>{if(e.key==='Tab'&&$('scanInput').value){e.preventDefault();armAudio();acceptScan($('scanInput').value);}});
+$('manualKeyboard').onclick=()=>{armAudio();const input=$('scanInput');input.inputMode=input.inputMode==='none'?'text':'none';$('manualKeyboard').textContent=input.inputMode==='none'?'⌨ Ручной ввод / клавиатура':'Скрыть клавиатуру ТСД';input.focus();};
 $('assemblyView').addEventListener('click',e=>{if(e.target.closest('button,a,video'))return;focusScanner();});
 async function acceptScan(value){if(T.scanBusy)return;T.scanBusy=true;try{
+ let feedbackText='';
   if(!T.draft)throw Error('Нет активной сборки');const val=String(value||'').trim();if(!val)throw Error('Пустой скан');
   if(T.draft.stage==='barcode'){
     const candidates=T.byBarcode.get(T.draft.lkId+'|'+val)||[];
     if(!candidates.length)throw Error('Штрихкод не найден в выбранном ЛК: '+val);
     if(candidates.length>1)throw Error('Штрихкод неоднозначен. Проверьте справочник.');
-    T.draft.pendingProductId=candidates[0].uuid;T.draft.stage='dm';
+    T.draft.pendingProductId=candidates[0].uuid;T.draft.stage='dm';feedbackText='ШК верный · '+candidates[0].article;
   }else{
     const p=T.byId.get(T.draft.pendingProductId);if(!p)throw Error('Сначала сканируйте ШК товара');
     const dm=parseDM(val);if(dm.gtin!==p.gtin)throw Error('GTIN ЧЗ '+dm.gtin+' не совпадает с товаром ('+p.gtin+')');
     if(T.scanCodes.has(dm.raw))throw Error('Этот ЧЗ уже отсканирован в текущей сборке');
     T.draft.scans.push({productId:p.uuid,barcode:p.barcodes[0],dm:dm.raw,gtin:dm.gtin});T.scanCodes.add(dm.raw);T.draft.pendingProductId=null;T.draft.stage='barcode';
-    message('Добавлено: '+p.article+' — 1 шт.');
+    feedbackText='ЧЗ принят · '+p.article+' · Всего '+T.draft.scans.length+' шт.';
   }
-  await DB.put('draft','current',T.draft);renderAssembly();
-}catch(err){message(err.message,'bad');$('scanInput').focus();$('scanInput').select();if(navigator.vibrate)navigator.vibrate([50,40,70]);}finally{T.scanBusy=false;}}
+  await DB.put('draft','current',T.draft);renderAssembly();scanSignal(true,feedbackText);
+}catch(err){scanSignal(false,err.message);message(err.message,'bad');$('scanInput').focus();$('scanInput').select();}finally{T.scanBusy=false;}}
 $('backHome').onclick=()=>{stopCamera();view('homeView');renderHome();if(T.draft)message('Незакрытая сборка сохранена локально. Нажмите «Вернуться к сборке», чтобы продолжить.','');};
-$('finishAssembly').onclick=()=>busy($('finishAssembly'),async()=>{
-  if(!T.draft)throw Error('Нет активной сборки');if(T.draft.stage==='dm')throw Error('Сначала отсканируйте ЧЗ последнего товара');
-  if(!T.draft.scans.length)throw Error('Нет отсканированных товаров');
-  if(!confirm('Закрыть сборку на '+T.draft.scans.length+' шт.? Она попадёт в очередь отправки.'))return;
-  const id=crypto.randomUUID(),byProduct=new Map();T.draft.scans.forEach(s=>{if(!byProduct.has(s.productId))byProduct.set(s.productId,[]);byProduct.get(s.productId).push(s.dm);});
+
+$('finishAssembly').onclick=()=>{
+  armAudio();
+  try{
+    if(!T.draft)throw Error('Нет активной сборки');
+    if(T.draft.stage==='dm')throw Error('Сначала отсканируйте ЧЗ последнего товара');
+    if(!T.draft.scans.length)throw Error('Нет отсканированных товаров');
+    const lk=T.catalog.lks.find(x=>x.uuid===T.draft.lkId);
+    const warehouse=T.catalog.warehouses.find(x=>x.uuid===T.draft.warehouseId);
+    const count=new Set(T.draft.scans.map(x=>x.productId)).size;
+    $('finishDescription').textContent='Проверьте итог и подтвердите закрытие.';
+    $('finishSummary').innerHTML=
+      '<div><span>Юридическое лицо</span><b>'+escapeHtml(lk?.legalEntity||'—')+'</b></div>'+
+      '<div><span>Личный кабинет</span><b>'+escapeHtml(lk?.name||'—')+'</b></div>'+
+      '<div><span>Склад</span><b>'+escapeHtml(warehouse?.name||'—')+'</b></div>'+
+      '<div><span>Количество</span><b>'+T.draft.scans.length+' шт. · '+count+' артикулов</b></div>';
+    $('finishOverlay').classList.remove('hidden');setViewportSheet();
+  }catch(e){scanSignal(false,e.message);message(e.message,'bad');}
+};
+$('cancelFinish').onclick=()=>{$('finishOverlay').classList.add('hidden');focusScanner();};
+$('finishOverlay').addEventListener('click',e=>{if(e.target===$('finishOverlay'))$('cancelFinish').click();});
+$('confirmFinish').onclick=()=>busy($('confirmFinish'),async()=>{
+  if(!T.draft||T.draft.stage!=='barcode'||!T.draft.scans.length)throw Error('Сборка не готова к закрытию');
+  const id=crypto.randomUUID(),byProduct=new Map();
+  T.draft.scans.forEach(s=>{if(!byProduct.has(s.productId))byProduct.set(s.productId,[]);byProduct.get(s.productId).push(s.dm);});
   const job={jobId:id,employeeId:T.employee.id,lkId:T.draft.lkId,warehouseId:T.draft.warehouseId,items:[...byProduct].map(([productId,codes])=>({productId,qty:codes.length,codes})),qty:T.draft.scans.length,createdAt:new Date().toISOString(),status:'QUEUED',message:''};
-  // Сначала сохраняем задание в IndexedDB; только потом удаляем черновик.
-  await DB.commitAssembly(job);T.draft=null;T.queue=await DB.all('queue');stopCamera();view('homeView');renderHome();message('Сборка '+job.qty+' шт. сохранена на устройстве. Передаём на сервер без блокировки интерфейса.');if(activeOnline()&&T.session)sendQueue();
+  await DB.commitAssembly(job);
+  T.draft=null;T.queue=await DB.all('queue');$('finishOverlay').classList.add('hidden');
+  stopCamera();view('homeView');renderHome();
+  message('Сборка '+job.qty+' шт. сохранена. Отправка в фоне при наличии связи.');
+  haptic([60,35,60]);playTone(true);
+  if(activeOnline()&&T.session)sendQueue();
 });
 $('syncCatalog').onclick=()=>busy($('syncCatalog'),async()=>{const changed=await syncCatalog(true);renderHome();message(changed?'Справочники обновлены':'Нет изменений');});
 async function syncCatalog(force=false){
