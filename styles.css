@@ -91,3 +91,16 @@ input,select,textarea{font-size:16px;min-height:52px;border-radius:12px}.card la
 #conflictConfirm{margin-top:8px;min-height:58px;font-size:13px}
 #conflictConfirm:disabled{background:#aab7ba;cursor:default}
 @media(max-height:630px){.conflict-sheet{height:calc(100dvh - 4px);padding:9px 11px}.conflict-row{padding:7px}.conflict-check{padding:8px}}
+
+
+/* Urovo CT48 — explicit duplicate scan + removal confirmation */
+.conflict-controls{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.conflict-controls button{min-height:48px;padding:9px;font-size:12px}
+.conflict-feedback{padding:11px 12px;border:1px solid #bed0d5;border-radius:10px;background:#eaf1f4;color:#294553;font-size:12px;font-weight:700;margin:10px 0}
+.conflict-feedback.success{background:#e1f8eb;color:#126b48;border-color:#30b27d}
+.conflict-feedback.failure{background:#ffebeb;color:#993443;border-color:#dc4d54}
+.conflict-code-preview{display:block;font-size:13px;padding:12px;overflow-wrap:anywhere;background:#f2f4f6;border-radius:10px;margin:12px 0}
+.conflict-remove-warning{background:#fff0dd;border:1px solid #e6b970;color:#7a4b1c;padding:13px;border-radius:11px;font-size:13px;line-height:1.5}
+.conflict-confirm-overlay{z-index:145}
+.conflict-done{border-left-color:#16a273;background:#f0fff6}
+.conflict-done .conflict-heading{color:#127b57}
