@@ -339,7 +339,7 @@ function renderQueue(){
  $('queueList').innerHTML=pending.length?pending.slice().reverse().map(j=>{
   const lk=T.catalog.lks.find(x=>x.uuid===j.lkId);
   const labels={QUEUED:'На устройстве',SENDING:'Отправляется',UNCERTAIN:'Ожидает ответа',ERROR:'Ошибка сервера'};
-  const conflict=j.status==='ERROR'&&j.errorCode==='CHZ_DUPLICATES'&&j.safeToResubmit&&Array.isArray(j.conflicts)&&j.conflicts.length;
+  const conflict=j.status==='ERROR'&&((j.errorCode==='CHZ_DUPLICATES'&&j.safeToResubmit&&Array.isArray(j.conflicts)&&j.conflicts.length)||(/^ЧЗ уже учтён ранее|^ЧЗ повторяется в сборке/i.test(j.message||'')));
   return '<div class="item job"><div><b>'+escapeHtml(lk?.name||'ЛК')+' · '+j.qty+' шт.</b><small>'+new Date(j.createdAt).toLocaleString('ru-RU')+' · '+escapeHtml(j.jobId.slice(0,8))+'</small><small>'+escapeHtml(j.message||'Сохранено локально')+'</small>'+
     (conflict?'<button type="button" class="primary conflict-open" data-job="'+escapeHtml(j.jobId)+'">Найти и убрать дубли ('+j.totalConflicts+')</button>':'')+
     '</div><span class="job-status '+(j.status==='ERROR'?'error':j.status==='UNCERTAIN'?'unknown':'')+'">'+escapeHtml(labels[j.status]||j.status)+'</span></div>';
@@ -353,7 +353,35 @@ $('queueList').addEventListener('click',e=>{
 let conflictJobId='';
 function openConflict(id){
  const job=T.queue.find(j=>j.jobId===id);
- if(!job||job.status!=='ERROR'||job.errorCode!=='CHZ_DUPLICATES'||!job.safeToResubmit)return;
+ if(!job||job.status!=='ERROR')return;
+ if(job.errorCode!=='CHZ_DUPLICATES' && /^ЧЗ уже учтён ранее|^ЧЗ повторяется в сборке/i.test(job.message||'')){
+   if(!T.session){message('Для проверки старой сборки войдите онлайн.','bad');return;}
+   const scans=conflictParts(job);
+   if(scans.length>2000){message('Слишком большая сборка для проверки','bad');return;}
+   stage('Проверяем ЧЗ старой сборки на сервере…',null);
+   (async()=>{
+     try{
+       const conflicts=[],seen=new Set();
+       for(let i=0;i<scans.length;i+=12){
+         const chunk=scans.slice(i,i+12);
+         const found=await API.jsonp(T.endpoint,{op:'findDuplicateCHZ',token:T.session,codes:JSON.stringify(chunk.map(x=>x.rawCode))});
+         found.duplicates.forEach((x,j)=>{
+           const scan=chunk[j],inside=seen.has(scan.rawCode);
+           if(x.registered||inside)conflicts.push({...scan,reason:x.registered?'REGISTERED':'IN_ASSEMBLY'});
+           seen.add(scan.rawCode);
+         });
+       }
+       if(!conflicts.length)throw Error('Дубли не найдены. Не разрешайте старую ошибку без проверки администратора.');
+       job.errorCode='CHZ_DUPLICATES';job.safeToResubmit=true;
+       job.conflicts=conflicts;job.totalConflicts=conflicts.length;
+       await DB.put('queue',job.jobId,job);
+       T.queue=await DB.all('queue');renderQueue();openConflict(job.jobId);
+     }catch(e){message('Не удалось проверить старую сборку: '+e.message,'bad');}
+     finally{stageEnd();}
+   })();
+   return;
+ }
+ if(job.errorCode!=='CHZ_DUPLICATES'||!job.safeToResubmit)return;
  if(job.totalConflicts!==job.conflicts.length){message('Сервер вернул не все дубли. Требуется дополнительная проверка администратора.','bad');return;}
  const matches=conflictMatches(job);
  if(matches.some(x=>!x.found)){message('Невозможно однозначно сопоставить конфликт с товаром. Не списывайте вручную.','bad');return;}
