@@ -1,11 +1,11 @@
-/* StockFlow TSD API v2.0.5 — Google Apps Script transport. Do not translate JS source. */
+/* StockFlow TSD API v2.0.6 — Google Apps Script transport. Do not translate JS source. */
 'use strict';
 window.API = (() => {
   function callbackId() {
     if (window.crypto && typeof window.crypto.randomUUID === 'function') {
-      return 'sf_' + window.crypto.randomUUID().replace(/-/g, '');
+      return 'cb_' + window.crypto.randomUUID().replace(/-/g, '');
     }
-    return 'sf_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
+    return 'cb_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
   }
 
   function jsonp(endpoint, params) {
@@ -37,7 +37,7 @@ window.API = (() => {
           finish(null, response.data);
         }
       };
-      script.onerror = () => finish(new Error('Нет связи с сервером или доступ ограничен'));
+      script.onerror = () => finish(new Error('Нет ответа от Apps Script. Проверьте ссылку /exec, публичный доступ к развёртыванию и код callback.'));
       script.src = url.toString();
       document.head.appendChild(script);
     });
