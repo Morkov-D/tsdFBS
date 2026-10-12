@@ -1,4 +1,4 @@
-<!doctype html><html lang="ru" translate="no"><head><meta charset="utf-8"><meta name="google" content="notranslate"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#14213d"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="./icons/icon192.png"><link rel="manifest" href="./manifest.webmanifest"><link rel="stylesheet" href="./styles.css?v=2.1.2"><title>StockFlow ТСД · CT48</title></head>
+<!doctype html><html lang="ru" translate="no"><head><meta charset="utf-8"><meta name="google" content="notranslate"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#14213d"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="./icons/icon192.png"><link rel="manifest" href="./manifest.webmanifest"><link rel="stylesheet" href="./styles.css?v=2.1.3"><title>StockFlow ТСД · CT48</title></head>
 <body><div class="app"><header class="header"><div class="logo">S</div><div><strong>StockFlow <span>ТСД</span></strong><small>Сборка и маркировка</small></div><div class="connection" id="connection">● В сети</div></header>
 <div id="alerts" role="status" aria-live="polite"></div>
 <div id="startupStatus" role="status" aria-live="assertive" style="margin:12px auto;padding:12px 16px;border-radius:12px;background:#e9f0fa;color:#14213d;font:600 14px system-ui">Загрузка терминала и локальной базы…</div>
@@ -9,6 +9,19 @@
 <section id="assemblyView" class="screen hidden"><div class="strip"><div><small>Активная сборка</small><b id="assemblyTitle"></b></div><span class="pill" id="assemblyCount">0 шт.</span></div><div class="card scan-card" id="scanCard" data-stage="barcode"><div class="scan-stage"><span id="scanStageCount">01 / 02</span><span class="stage-dot" id="scanIndicator">●</span></div><div class="scan-steps"><span id="scanStepOne" class="active">1 · Штрихкод</span><span id="scanStepTwo">2 · DataMatrix</span></div><h1 id="scanTitle">Штрихкод товара</h1><p id="scanHelp">Отсканируйте товар сканером или введите ШК вручную.</p><div id="scanFeedback" class="scan-feedback" role="status" aria-live="assertive"><span id="scanFeedbackIcon" aria-hidden="true">◎</span> <span id="scanFeedbackText">Ожидание сканирования</span></div><form id="scanForm"><input id="scanInput" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="none" enterkeyhint="done" autofocus placeholder="Ожидание сканирования..."><button class="primary full">Подтвердить скан / Enter</button></form><button class="ghost full" id="manualKeyboard">⌨ Ручной ввод / клавиатура</button><button class="ghost full camera-action" id="cameraBtn">⌗ Камера (если поддерживается)</button><div id="cameraBox" class="hidden"><video id="cameraVideo" autoplay playsinline muted></video><button class="ghost full" id="cameraStop">Закрыть камеру</button></div></div><div class="card"><div class="card-title"><h2>Отсканировано</h2><span id="scanSummary" class="muted">0 позиций</span></div><div id="scanHistory" class="stack"></div></div><div class="bottom-actions"><button class="ghost" id="backHome">Назад</button><button class="primary" id="finishAssembly">Закрыть сборку</button></div></section>
 <div id="pickerOverlay" class="sheet-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="pickerTitle"><div class="picker-sheet"><div class="picker-head"><div><small id="pickerStep">СБОРКА</small><h2 id="pickerTitle">Выберите ЛК</h2></div><button type="button" class="ghost icon-close" id="pickerClose" aria-label="Закрыть">✕</button></div><div class="picker-content"><label for="pickerSearch">Поиск</label><input id="pickerSearch" autocomplete="off" spellcheck="false" enterkeyhint="search" placeholder="ЛК, маркетплейс, ID, юрлицо или ИНН"><div id="pickerItems" class="picker-items" role="listbox"></div></div><div class="picker-foot" id="pickerHint">Выберите значение из списка</div></div></div>
 <div id="finishOverlay" class="sheet-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="finishTitle"><div class="finish-sheet"><div class="confirm-emblem">✓</div><h2 id="finishTitle">Закрыть сборку?</h2><p id="finishDescription" class="confirm-description"></p><div id="finishSummary" class="confirm-summary"></div><p class="small-note">Сначала сборка сохранится на устройстве. При наличии связи начнётся отправка на сервер.</p><div class="confirm-actions"><button type="button" class="ghost" id="cancelFinish">Продолжить</button><button type="button" class="primary" id="confirmFinish">Сохранить и закрыть</button></div></div></div>
+<div id="conflictOverlay" class="sheet-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="conflictTitle">
+ <div class="finish-sheet conflict-sheet">
+  <div class="picker-head"><div><small>ПРОВЕРКА ЧЗ</small><h2 id="conflictTitle">Найдены повторные коды</h2></div>
+    <button id="conflictClose" class="ghost icon-close" type="button" aria-label="Закрыть">✕</button></div>
+  <p id="conflictContext" class="small-note"></p>
+  <p class="small-note">Найдите каждый товар по DataMatrix, <b>физически удалите его из собираемой партии</b> и отметьте подтверждение. Остальные товары отправятся отдельной сборкой. Исходная ошибка сохранится.</p>
+  <label for="conflictSearch">Поиск по DataMatrix</label>
+  <input id="conflictSearch" autocomplete="off" spellcheck="false" placeholder="Сканируйте или введите код">
+  <b id="conflictCount" class="conflict-count"></b>
+  <div id="conflictList" class="conflict-list"></div>
+  <button class="primary full" id="conflictConfirm" type="button" disabled>Подтвердить удаление и отправить остальные</button>
+ </div>
+</div>
 <div id="screenFlash" class="screen-flash" aria-hidden="true"></div>
 <footer>Черновики и очередь хранятся локально в IndexedDB. В Google Таблицы данные попадут после подтверждения сервером.</footer></div>
 <script>
@@ -35,6 +48,6 @@
   window.stockflowBootError = showError;
 })();
 </script>
-<script src="./db.js?v=2.1.2"></script>
-<script src="./api.js?v=2.1.2"></script>
-<script src="./app.js?v=2.1.2"></script></body></html>
+<script src="./db.js?v=2.1.3"></script>
+<script src="./api.js?v=2.1.3"></script>
+<script src="./app.js?v=2.1.3"></script></body></html>
