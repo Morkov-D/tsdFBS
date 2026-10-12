@@ -341,7 +341,7 @@ function renderQueue(){
   const labels={QUEUED:'На устройстве',SENDING:'Отправляется',UNCERTAIN:'Ожидает ответа',ERROR:'Ошибка сервера'};
   const conflict=j.status==='ERROR'&&((j.errorCode==='CHZ_DUPLICATES'&&j.safeToResubmit&&Array.isArray(j.conflicts)&&j.conflicts.length)||(/^ЧЗ уже учтён ранее|^ЧЗ повторяется в сборке/i.test(j.message||'')));
   return '<div class="item job"><div><b>'+escapeHtml(lk?.name||'ЛК')+' · '+j.qty+' шт.</b><small>'+new Date(j.createdAt).toLocaleString('ru-RU')+' · '+escapeHtml(j.jobId.slice(0,8))+'</small><small>'+escapeHtml(j.message||'Сохранено локально')+'</small>'+
-    (conflict?'<button type="button" class="primary conflict-open" data-job="'+escapeHtml(j.jobId)+'">Найти и убрать дубли ('+j.totalConflicts+')</button>':'')+
+    (conflict?'<button type="button" class="primary conflict-open" data-job="'+escapeHtml(j.jobId)+'">'+(j.totalConflicts?'Проверить дубли · '+(j.confirmedConflicts?.length||0)+'/'+j.totalConflicts:'Проверить дубли')+'</button>':'')+
     '</div><span class="job-status '+(j.status==='ERROR'?'error':j.status==='UNCERTAIN'?'unknown':'')+'">'+escapeHtml(labels[j.status]||j.status)+'</span></div>';
  }).join(''):'<p class="muted">Очередь пуста. Подтверждённые задания удалены из очереди, а разрешённые конфликты сохранены в архиве устройства.</p>';
  $('sendQueue').disabled=T.sending||pending.every(j=>j.status==='ERROR');
@@ -388,50 +388,211 @@ function openConflict(id){
  conflictJobId=id;
  const lk=T.catalog.lks.find(x=>x.uuid===job.lkId),wh=T.catalog.warehouses.find(x=>x.uuid===job.warehouseId);
  $('conflictContext').textContent=(lk?.name||'ЛК')+' · '+(wh?.name||'Склад')+' · '+job.qty+' шт.';
- $('conflictSearch').value='';
- $('conflictList').innerHTML=matches.map((x,i)=>{
-  const p=T.byId.get(x.conflict.productId);
-  return '<div class="conflict-row" data-dm="'+escapeHtml(x.conflict.rawCode)+'"><div class="conflict-heading">Дубль '+(i+1)+' из '+matches.length+' · '+escapeHtml(x.conflict.reason==='IN_ASSEMBLY'?'Повтор внутри сборки':'Уже есть на сервере')+'</div>'+
-    '<b>'+escapeHtml(p?.article||x.conflict.article||'Товар')+'</b><small>GTIN '+escapeHtml(p?.gtin||'')+'</small>'+
-    '<code>'+escapeHtml(x.conflict.rawCode)+'</code><label class="conflict-check"><input type="checkbox" class="conflict-removed" data-index="'+i+'"> Я нашёл товар по DataMatrix и физически убрал его из сборки</label></div>';
- }).join('');
- $('conflictCount').textContent=matches.length+' конфликтов';
  $('conflictOverlay').classList.remove('hidden');
- $('conflictConfirm').disabled=true;
+ $('conflictConfirmOverlay').classList.add('hidden');
+ conflictManual=false;
+ $('conflictSearch').inputMode='none';
+ $('conflictKeyboard').textContent='⌨ Ручной ввод';
+ $('conflictSearch').value='';
+ renderConflictRows(job);
  setViewportSheet();
+ focusConflictScanner();
+ if((job.confirmedConflicts||[]).length===job.totalConflicts){
+   void finalizeConfirmedConflicts(id).catch(e=>message(e.message,'bad'));
+ }
 }
-$('conflictClose').onclick=()=>{$('conflictOverlay').classList.add('hidden');conflictJobId='';};
-$('conflictOverlay').addEventListener('change',()=>{
- const checkboxes=[...$('conflictOverlay').querySelectorAll('.conflict-removed')];
- $('conflictConfirm').disabled=!checkboxes.length||!checkboxes.every(x=>x.checked);
-});
+const conflictScan={timer:null,busy:false,candidate:null};
+let conflictManual=false;
+function conflictKey(c){return String(c.itemIndex)+'|'+String(c.codeIndex);}
+function conflictCode(v){
+ return String(v==null?'':v).replace(/^\]d2/,'').replace(/[\r\n]+$/g,'');
+}
+function conflictIsOpen(){
+ return !$('conflictOverlay').classList.contains('hidden');
+}
+function focusConflictScanner(){
+ if(!conflictIsOpen()||!$('conflictConfirmOverlay').classList.contains('hidden'))return;
+ try{$('conflictSearch').focus({preventScroll:true});}catch(_) { $('conflictSearch').focus(); }
+}
+function currentConflictJob(){
+ return T.queue.find(j=>j.jobId===conflictJobId);
+}
+function renderConflictRows(job){
+ const matches=conflictMatches(job);
+ const done=new Set((job.confirmedConflicts||[]).map(conflictKey));
+ $('conflictCount').textContent='Проверено '+done.size+' из '+matches.length;
+ $('conflictList').innerHTML=matches.map((x,i)=>{
+  const p=T.byId.get(x.conflict.productId),verified=done.has(conflictKey(x.conflict));
+  return '<div class="conflict-row '+(verified?'conflict-done':'')+'"><div class="conflict-heading">'+
+    (verified?'✓ Подтверждено удаление':'⚠ Требует сканирования')+' · '+(i+1)+'/'+matches.length+'</div>'+
+    '<b>'+escapeHtml(p?.article||x.conflict.article||'Товар')+'</b>'+
+    '<small>GTIN '+escapeHtml(p?.gtin||'—')+' · '+escapeHtml(x.conflict.reason==='IN_ASSEMBLY'?'Дубль внутри сборки':'Уже есть на сервере')+'</small>'+
+    '<code>'+escapeHtml(x.conflict.rawCode)+'</code></div>';
+ }).join('');
+ $('conflictHelp').textContent=done.size===matches.length
+   ?'Все дубли подтверждены. Сохраняем сборку и ставим оставшиеся товары в очередь…'
+   :'Отсканируйте DataMatrix товара, который нужно убрать из сборки. После сканирования подтвердите его физическое удаление.';
+}
+function conflictFeedback(ok,text){
+ const box=$('conflictFeedback');
+ box.textContent=text;
+ box.className='conflict-feedback '+(ok?'success':'failure');
+ haptic(ok?[50]:[130,60,170]);
+ playTone(ok);
+}
+function conflictScanInput(){
+ clearTimeout(conflictScan.timer);
+ conflictScan.timer=setTimeout(()=>void verifyConflictScan(),conflictManual?1400:400);
+}
+async function verifyConflictScan(){
+ if(conflictScan.busy||!conflictIsOpen()||!$('conflictConfirmOverlay').classList.contains('hidden'))return;
+ clearTimeout(conflictScan.timer);
+ const scanned=conflictCode($('conflictSearch').value);
+ if(!scanned){
+  conflictFeedback(false,'Сканер не передал DataMatrix. Проверьте клавиатурный режим ScanWedge.');
+  focusConflictScanner();
+  return;
+ }
+ $('conflictSearch').value='';
+ const job=currentConflictJob();
+ if(!job){conflictFeedback(false,'Задание отсутствует в очереди');return;}
+ const matches=conflictMatches(job);
+ const verified=new Set((job.confirmedConflicts||[]).map(conflictKey));
+ const pending=matches.find(x=>conflictCode(x.conflict.rawCode)===scanned&&!verified.has(conflictKey(x.conflict)));
+ if(!pending){
+  const already=matches.some(x=>conflictCode(x.conflict.rawCode)===scanned);
+  conflictFeedback(false,already?'Этот экземпляр ЧЗ уже проверен. Сканируйте следующий проблемный товар.':'Отсканированный ЧЗ отсутствует в списке дублей. Товар не удалён из задания.');
+  focusConflictScanner();
+  return;
+ }
+ conflictScan.candidate={jobId:job.jobId,key:conflictKey(pending.conflict),rawCode:pending.conflict.rawCode};
+ const p=T.byId.get(pending.conflict.productId);
+ $('conflictProduct').textContent=p?.article||pending.conflict.article||'Товар';
+ $('conflictGtin').textContent='GTIN: '+(p?.gtin||'—');
+ $('conflictMatrix').textContent=pending.conflict.rawCode;
+ $('conflictConfirmOverlay').classList.remove('hidden');
+ $('conflictConfirmRemove').disabled=false;
+ conflictFeedback(false,'Дубль найден. Уберите товар физически и подтвердите это в окне.');
+}
 $('conflictSearch').addEventListener('input',()=>{
- const q=$('conflictSearch').value.trim();
- for(const row of $('conflictList').querySelectorAll('.conflict-row')){
-  row.classList.toggle('conflict-highlight',!!q&&row.dataset.dm.includes(q));
+ if(conflictIsOpen()&&$('conflictConfirmOverlay').classList.contains('hidden')&&!conflictManual){
+   conflictScanInput();
  }
 });
-$('conflictConfirm').onclick=()=>busy($('conflictConfirm'),async()=>{
- const job=T.queue.find(j=>j.jobId===conflictJobId);
- if(!job||!job.safeToResubmit||job.errorCode!=='CHZ_DUPLICATES'||job.status!=='ERROR')throw Error('Сборка уже изменена. Обновите очередь.');
- const matches=conflictMatches(job);
- const checks=[...$('conflictList').querySelectorAll('.conflict-removed')];
- if(!matches.length||matches.length!==job.totalConflicts||matches.some(x=>!x.found)||checks.length!==matches.length||checks.some(x=>!x.checked))
-  throw Error('Сначала найдите и физически уберите каждый конфликтный товар');
- const removed=matches.map(x=>({itemIndex:x.conflict.itemIndex,codeIndex:x.conflict.codeIndex,rawCode:x.conflict.rawCode,productId:x.conflict.productId,confirmedBy:T.employee.id,confirmedAt:new Date().toISOString()}));
- const drop=new Set(removed.map(x=>x.itemIndex+'|'+x.codeIndex));
- const items=job.items.map((item,i)=>({...item,codes:item.codes.filter((code,j)=>!drop.has(i+'|'+j))}))
-  .filter(item=>item.codes.length).map(item=>({...item,qty:item.codes.length}));
- const count=items.reduce((n,item)=>n+item.qty,0);
- const newJob=count?{jobId:crypto.randomUUID(),employeeId:T.employee.id,lkId:job.lkId,warehouseId:job.warehouseId,items,qty:count,createdAt:new Date().toISOString(),status:'QUEUED',message:'После ручного удаления конфликтных ЧЗ из '+job.jobId.slice(0,8),parentJobId:job.jobId}:null;
- await DB.resolveConflict(job.jobId,newJob,removed);
- T.queue=await DB.all('queue');
- $('conflictOverlay').classList.add('hidden');conflictJobId='';
- renderQueue();
- haptic([60,30,60]);playTone(true);
- message(newJob?'Снято '+removed.length+' дублей; '+count+' шт. поставлены в очередь.':'Все товары были дублями. Сборка закрыта без списания.');
- if(newJob&&T.session&&activeOnline())sendQueue();
+$('conflictSearch').addEventListener('compositionend',()=>{if(!conflictManual)conflictScanInput();});
+$('conflictSearch').addEventListener('keydown',e=>{
+ if(e.key==='Enter'||e.key==='Tab'){
+  e.preventDefault();e.stopPropagation();
+  clearTimeout(conflictScan.timer);
+  conflictScan.timer=setTimeout(()=>void verifyConflictScan(),$('conflictSearch').value?120:460);
+ }
 });
+document.addEventListener('keydown',e=>{
+ if(!conflictIsOpen()||!$('conflictConfirmOverlay').classList.contains('hidden'))return;
+ const input=$('conflictSearch'),target=e.target;
+ if(target===input)return;
+ if(target&&/^(BUTTON|INPUT|SELECT|TEXTAREA)$/.test(target.tagName||''))return;
+ if(e.key==='Enter'||e.key==='Tab'){
+  e.preventDefault();clearTimeout(conflictScan.timer);
+  conflictScan.timer=setTimeout(()=>void verifyConflictScan(),input.value?120:460);
+ }else if(e.key.length===1&&!e.ctrlKey&&!e.altKey&&!e.metaKey){
+  e.preventDefault();focusConflictScanner();input.value+=e.key;
+  input.dispatchEvent(new Event('input',{bubbles:true}));
+ }
+},true);
+$('conflictKeyboard').onclick=()=>{
+ conflictManual=!conflictManual;
+ $('conflictSearch').inputMode=conflictManual?'text':'none';
+ $('conflictKeyboard').textContent=conflictManual?'Скрыть клавиатуру':'⌨ Ручной ввод';
+ focusConflictScanner();
+};
+$('conflictVerify').onclick=()=>void verifyConflictScan();
+$('conflictClose').onclick=()=>{
+ if(conflictScan.busy)return;
+ clearTimeout(conflictScan.timer);
+ $('conflictOverlay').classList.add('hidden');
+ $('conflictConfirmOverlay').classList.add('hidden');
+ conflictScan.candidate=null;conflictJobId='';
+};
+$('conflictCancelRemove').onclick=()=>{
+ if(conflictScan.busy)return;
+ $('conflictConfirmOverlay').classList.add('hidden');
+ conflictScan.candidate=null;
+ $('conflictSearch').value='';
+ $('conflictFeedback').textContent='Отмена подтверждения. Отсканируйте нужный DataMatrix.';
+ $('conflictFeedback').className='conflict-feedback';
+ focusConflictScanner();
+};
+$('conflictConfirmRemove').onclick=async()=>{
+ if(conflictScan.busy)return;
+ conflictScan.busy=true;
+ const btn=$('conflictConfirmRemove');btn.disabled=true;
+ try{
+  const candidate=conflictScan.candidate;
+  if(!candidate||!conflictJobId||candidate.jobId!==conflictJobId)throw Error('Не выбран код для подтверждения');
+  const job=await DB.get('queue',conflictJobId);
+  if(!job||job.status!=='ERROR'||job.errorCode!=='CHZ_DUPLICATES'||!job.safeToResubmit)
+    throw Error('Задание больше не находится в безопасном состоянии для исправления');
+  const matches=conflictMatches(job);
+  const match=matches.find(x=>conflictKey(x.conflict)===candidate.key&&x.conflict.rawCode===candidate.rawCode&&x.found);
+  if(!match)throw Error('Код не соответствует конфликту. Повторите проверку');
+  const confirmations=job.confirmedConflicts||[];
+  if(confirmations.some(x=>conflictKey(x)===candidate.key))throw Error('Этот товар уже отмечен как убранный');
+  job.confirmedConflicts=[...confirmations,{
+   itemIndex:match.conflict.itemIndex,codeIndex:match.conflict.codeIndex,
+   rawCode:match.conflict.rawCode,productId:match.conflict.productId,
+   confirmedBy:T.employee.id,confirmedAt:new Date().toISOString()
+  }];
+  await DB.put('queue',job.jobId,job);
+  T.queue=await DB.all('queue');
+  $('conflictConfirmOverlay').classList.add('hidden');
+  conflictScan.candidate=null;
+  $('conflictSearch').value='';
+  renderConflictRows(job);
+  conflictFeedback(true,'Подтверждено: товар убран. '+job.confirmedConflicts.length+' из '+job.totalConflicts);
+  if(job.confirmedConflicts.length===job.totalConflicts){
+   await finalizeConfirmedConflicts(job.jobId);
+  }else{
+   focusConflictScanner();
+  }
+ }catch(e){
+  conflictFeedback(false,'Не удалось сохранить подтверждение: '+e.message);
+  message(e.message,'bad');
+ }finally{conflictScan.busy=false;btn.disabled=false;}
+};
+async function finalizeConfirmedConflicts(jobId){
+ const job=await DB.get('queue',jobId);
+ if(!job||job.status!=='ERROR'||job.errorCode!=='CHZ_DUPLICATES'||!job.safeToResubmit)
+  throw Error('Нельзя автоматически отправить сборку: неверный статус');
+ const matches=conflictMatches(job);
+ const verified=job.confirmedConflicts||[];
+ const keys=new Set(verified.map(conflictKey));
+ if(!matches.length||matches.length!==job.totalConflicts||keys.size!==matches.length||
+    matches.some(x=>!x.found||!keys.has(conflictKey(x.conflict))) ||
+    verified.some(x=>!matches.some(y=>conflictKey(x)===conflictKey(y.conflict)&&x.rawCode===y.conflict.rawCode))){
+  throw Error('Не все конфликтные ЧЗ проверены. Остаток сборки не отправлен.');
+ }
+ const drop=new Set(verified.map(conflictKey));
+ const items=job.items.map((item,i)=>({...item,codes:item.codes.filter((_,j)=>!drop.has(i+'|'+j))}))
+   .filter(item=>item.codes.length).map(item=>({...item,qty:item.codes.length}));
+ const count=items.reduce((n,item)=>n+item.qty,0);
+ const newJob=count?{jobId:crypto.randomUUID(),employeeId:T.employee.id,
+   lkId:job.lkId,warehouseId:job.warehouseId,items,qty:count,
+   createdAt:new Date().toISOString(),status:'QUEUED',message:'После исключения дублей ЧЗ из '+job.jobId.slice(0,8),
+   parentJobId:job.jobId}:null;
+ await DB.resolveConflict(job.jobId,newJob,verified);
+ T.queue=await DB.all('queue');
+ $('conflictConfirmOverlay').classList.add('hidden');
+ $('conflictOverlay').classList.add('hidden');
+ conflictJobId='';conflictScan.candidate=null;
+ renderQueue();
+ conflictFeedback(true,'Проверено и исключено '+verified.length+' дублей.');
+ message(newJob?'Дубли удалены. Оставшиеся '+count+' шт. отправляются на сервер.':'Все товары были дублями; отправлять нечего.');
+ if(newJob&&T.session&&activeOnline()){
+   if(T.sending)setTimeout(()=>sendQueue(),1500);
+   else void sendQueue();
+ }
+}
 $('sendQueue').onclick=()=>sendQueue();
 async function sendQueue(){
  if(T.sending)return;
