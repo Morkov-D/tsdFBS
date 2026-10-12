@@ -156,9 +156,96 @@ function renderAssembly(){if(!T.draft)return;const lk=T.catalog.lks.find(x=>x.uu
   $('scanHistory').innerHTML=entries.length?entries.slice(-24).reverse().map(([id,n])=>{const p=T.byId.get(id);return `<div class="item"><div><b>${escapeHtml(p?.article||'Неизвестный товар')}</b><small>${escapeHtml(p?.gtin||'')}</small></div><span>${n} шт.</span></div>`;}).join('')+(entries.length>24?`<p class="muted">Показаны 24 из ${entries.length} артикулов</p>`:''):'<p class="muted">Здесь появятся отсканированные товары</p>';
   requestAnimationFrame(focusScanner);
 }
-$('scanForm').onsubmit=e=>{e.preventDefault();acceptScan($('scanInput').value);};
-$('scanInput').addEventListener('keydown',e=>{if(e.key==='Tab'&&$('scanInput').value){e.preventDefault();armAudio();acceptScan($('scanInput').value);}});
-$('manualKeyboard').onclick=()=>{armAudio();const input=$('scanInput');input.inputMode=input.inputMode==='none'?'text':'none';$('manualKeyboard').textContent=input.inputMode==='none'?'⌨ Ручной ввод / клавиатура':'Скрыть клавиатуру ТСД';input.focus();};
+/* Urovo CT48 keyboard-wedge input: Enter/Tab may precede input/IME text.
+ * Do not treat an empty Enter as a scanned DataMatrix. */
+const scanIO={inputTimer:0,emptyTimer:0,pending:[],composing:false,manual:false};
+function scanScreenActive(){
+  return !!T.draft && !$('assemblyView').classList.contains('hidden')
+    && $('pickerOverlay').classList.contains('hidden')
+    && $('finishOverlay').classList.contains('hidden');
+}
+function clearScanTimers(){
+  clearTimeout(scanIO.inputTimer);
+  clearTimeout(scanIO.emptyTimer);
+  scanIO.inputTimer=0;
+  scanIO.emptyTimer=0;
+}
+function missingScannerData(){
+  if(!scanScreenActive() || String($('scanInput').value||'').length)return;
+  const reason='Сканер CT48 отправил Enter, но код не попал в поле. Откройте ScanWedge → Output mode: Keystroke output (клавиатурный ввод), Keyboard type: Auto text. Затем снова сканируйте ЧЗ.';
+  scanSignal(false,reason);
+  message(reason,'bad');
+  focusScanner();
+}
+function flushScannedInput(){
+  if(!scanScreenActive()) return;
+  clearScanTimers();
+  const input=$('scanInput'),value=input.value;
+  if(!value || !value.trim()){
+    scanIO.emptyTimer=setTimeout(missingScannerData,500);
+    return;
+  }
+  input.value='';
+  if(T.scanBusy){
+    if(scanIO.pending.length<20)scanIO.pending.push(value);
+    else {scanSignal(false,'Очередь сканирования переполнена. Не сканируйте следующий код до завершения обработки.');}
+    return;
+  }
+  void acceptScan(value);
+}
+function scheduleScanCommit(delay){
+  clearTimeout(scanIO.inputTimer);
+  clearTimeout(scanIO.emptyTimer);
+  scanIO.inputTimer=setTimeout(flushScannedInput,delay);
+}
+$('scanForm').onsubmit=e=>{
+  e.preventDefault();armAudio();
+  scheduleScanCommit($('scanInput').value?80:320);
+};
+$('scanInput').addEventListener('input',()=>{
+  clearTimeout(scanIO.emptyTimer);
+  if(!scanScreenActive() || scanIO.composing || scanIO.manual)return;
+  const value=$('scanInput').value;
+  if(value.length >= (T.draft.stage==='dm'?18:5)){
+    // Idle debounce: scanner batches key events or Android IME paste asynchronously.
+    scheduleScanCommit(310);
+  }
+});
+$('scanInput').addEventListener('compositionstart',()=>{scanIO.composing=true;clearTimeout(scanIO.inputTimer);});
+$('scanInput').addEventListener('compositionend',()=>{
+  scanIO.composing=false;
+  if(!scanIO.manual && $('scanInput').value) scheduleScanCommit(310);
+});
+document.addEventListener('keydown',e=>{
+  if(!scanScreenActive())return;
+  const field=$('scanInput');
+  const target=e.target;
+  const otherControl=target!==field && target && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(target.tagName||'');
+  if(otherControl)return;
+  if(e.key==='Enter' || e.key==='Tab'){
+    e.preventDefault();
+    armAudio();
+    scheduleScanCommit(field.value?100:350);
+    return;
+  }
+  // Some keystroke profiles send characters after the focus is lost.
+  if(target!==field && typeof e.key==='string' && e.key.length===1 &&
+     !e.ctrlKey && !e.altKey && !e.metaKey){
+    e.preventDefault();
+    focusScanner();
+    field.value+=e.key;
+    field.dispatchEvent(new Event('input',{bubbles:true}));
+  }
+},true);
+$('manualKeyboard').onclick=()=>{
+  armAudio();
+  const input=$('scanInput');
+  scanIO.manual=!scanIO.manual;
+  input.inputMode=scanIO.manual?'text':'none';
+  $('manualKeyboard').textContent=scanIO.manual?'Скрыть клавиатуру ТСД':'⌨ Ручной ввод / клавиатура';
+  clearScanTimers();
+  focusScanner();
+};
 $('assemblyView').addEventListener('click',e=>{if(e.target.closest('button,a,video'))return;focusScanner();});
 async function acceptScan(value){if(T.scanBusy)return;T.scanBusy=true;try{
  let feedbackText='';
@@ -176,7 +263,7 @@ async function acceptScan(value){if(T.scanBusy)return;T.scanBusy=true;try{
     feedbackText='ЧЗ принят · '+p.article+' · Всего '+T.draft.scans.length+' шт.';
   }
   await DB.put('draft','current',T.draft);renderAssembly();scanSignal(true,feedbackText);
-}catch(err){scanSignal(false,err.message);message(err.message,'bad');$('scanInput').focus();$('scanInput').select();}finally{T.scanBusy=false;}}
+}catch(err){scanSignal(false,err.message);message(err.message,'bad');focusScanner();$('scanInput').select();}finally{T.scanBusy=false;if(scanIO.pending.length){const next=scanIO.pending.shift();Promise.resolve().then(()=>acceptScan(next));}}}
 $('backHome').onclick=()=>{stopCamera();view('homeView');renderHome();if(T.draft)message('Незакрытая сборка сохранена локально. Нажмите «Вернуться к сборке», чтобы продолжить.','');};
 
 $('finishAssembly').onclick=()=>{
