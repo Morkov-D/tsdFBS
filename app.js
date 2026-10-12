@@ -6,9 +6,17 @@ function stageEnd(){const box=$('workProgress');if(box)box.classList.add('hidden
 function buildIndexes(){T.byId=new Map();T.byBarcode=new Map();(T.catalog.products||[]).forEach(p=>{T.byId.set(p.uuid,p);(p.barcodes||[]).forEach(code=>{const key=p.lkId+'|'+String(code);const arr=T.byBarcode.get(key)||[];arr.push(p);T.byBarcode.set(key,arr);});});T.scanCodes=new Set(T.draft?.scans?.map(x=>x.dm)||[]);}
 
 function focusScanner() {
-  if($('assemblyView').classList.contains('hidden') || !$('pickerOverlay').classList.contains('hidden') || !$('finishOverlay').classList.contains('hidden')) return;
+  if(!T.draft || document.hidden || $('assemblyView').classList.contains('hidden')
+    || !$('pickerOverlay').classList.contains('hidden')
+    || !$('finishOverlay').classList.contains('hidden')
+    || !$('conflictOverlay').classList.contains('hidden')
+    || !$('conflictConfirmOverlay').classList.contains('hidden')) return;
   const input=$('scanInput');
-  if(document.activeElement!==input){ try{ input.focus({preventScroll:true}); }catch(_){ input.focus(); } }
+  if(document.activeElement!==input){try{input.focus({preventScroll:true});}catch(_){input.focus();}}
+  if(document.activeElement===input && $('scanFocusStatus')){
+    $('scanFocusStatus').textContent='● Сканер готов · поле активно';
+    $('scanFocusStatus').classList.add('ready');
+  }
 }
 function haptic(pattern){try{if(navigator.vibrate)navigator.vibrate(pattern);}catch(_){}}
 function armAudio() {
@@ -149,7 +157,7 @@ function renderAssembly(){if(!T.draft)return;const lk=T.catalog.lks.find(x=>x.uu
   $('assemblyCount').textContent=codes.length+' шт.';$('scanStageCount').textContent=stage==='barcode'?'01 / 02':'02 / 02';
   $('scanTitle').textContent=stage==='barcode'?'Штрихкод товара':'DataMatrix ЧЗ';
   const product=T.byId.get(T.draft.pendingProductId);
-  $('scanHelp').textContent=stage==='barcode'?'Сканируйте ШК товара, затем подтвердите Enter.':`Товар: ${product?.article||'Не найден'}. Отсканируйте код ЧЗ.`;
+  $('scanHelp').textContent=stage==='barcode'?'Сканируйте ШК сразу — ввод и переход к ЧЗ автоматические.':`Товар: ${product?.article||'Не найден'}. Отсканируйте код ЧЗ.`;
   $('scanInput').value='';$('scanInput').placeholder=stage==='barcode'?'ШК товара…':'GS1 DataMatrix…';$('scanCard').dataset.stage=stage;
   $('scanStepOne').classList.toggle('done',stage==='dm');$('scanStepTwo').classList.toggle('active',stage==='dm');
   const ag={};codes.forEach(s=>{ag[s.productId]=(ag[s.productId]||0)+1;});const entries=Object.entries(ag);$('scanSummary').textContent=entries.length+' артикулов';
@@ -158,11 +166,13 @@ function renderAssembly(){if(!T.draft)return;const lk=T.catalog.lks.find(x=>x.uu
 }
 /* Urovo CT48 keyboard-wedge input: Enter/Tab may precede input/IME text.
  * Do not treat an empty Enter as a scanned DataMatrix. */
-const scanIO={inputTimer:0,emptyTimer:0,pending:[],composing:false,manual:false};
+const scanIO={inputTimer:0,emptyTimer:0,pending:[],composing:false,manual:false,focusTimer:0};
 function scanScreenActive(){
   return !!T.draft && !$('assemblyView').classList.contains('hidden')
     && $('pickerOverlay').classList.contains('hidden')
-    && $('finishOverlay').classList.contains('hidden');
+    && $('finishOverlay').classList.contains('hidden')
+    && $('conflictOverlay').classList.contains('hidden')
+    && $('conflictConfirmOverlay').classList.contains('hidden');
 }
 function clearScanTimers(){
   clearTimeout(scanIO.inputTimer);
@@ -182,7 +192,7 @@ function flushScannedInput(){
   clearScanTimers();
   const input=$('scanInput'),value=input.value;
   if(!value || !value.trim()){
-    scanIO.emptyTimer=setTimeout(missingScannerData,500);
+    scanIO.emptyTimer=setTimeout(missingScannerData,900);
     return;
   }
   input.value='';
@@ -208,20 +218,21 @@ $('scanInput').addEventListener('input',()=>{
   const value=$('scanInput').value;
   if(value.length >= (T.draft.stage==='dm'?18:5)){
     // Idle debounce: scanner batches key events or Android IME paste asynchronously.
-    scheduleScanCommit(310);
+    scheduleScanCommit(240);
   }
 });
 $('scanInput').addEventListener('compositionstart',()=>{scanIO.composing=true;clearTimeout(scanIO.inputTimer);});
 $('scanInput').addEventListener('compositionend',()=>{
   scanIO.composing=false;
-  if(!scanIO.manual && $('scanInput').value) scheduleScanCommit(310);
+  if(!scanIO.manual && $('scanInput').value) scheduleScanCommit(240);
 });
 document.addEventListener('keydown',e=>{
   if(!scanScreenActive())return;
   const field=$('scanInput');
   const target=e.target;
-  const otherControl=target!==field && target && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(target.tagName||'');
+  const otherControl=target!==field && target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName||'');
   if(otherControl)return;
+  // Hardware ScanWedge can type while a recently pressed action button has focus.
   if(e.key==='Enter' || e.key==='Tab'){
     e.preventDefault();
     armAudio();
@@ -411,8 +422,9 @@ function conflictIsOpen(){
  return !$('conflictOverlay').classList.contains('hidden');
 }
 function focusConflictScanner(){
- if(!conflictIsOpen()||!$('conflictConfirmOverlay').classList.contains('hidden'))return;
- try{$('conflictSearch').focus({preventScroll:true});}catch(_) { $('conflictSearch').focus(); }
+ if(document.hidden||!conflictIsOpen()||!$('conflictConfirmOverlay').classList.contains('hidden'))return;
+ const input=$('conflictSearch');
+ if(document.activeElement!==input){try{input.focus({preventScroll:true});}catch(_){input.focus();}}
 }
 function currentConflictJob(){
  return T.queue.find(j=>j.jobId===conflictJobId);
@@ -491,7 +503,7 @@ document.addEventListener('keydown',e=>{
  if(!conflictIsOpen()||!$('conflictConfirmOverlay').classList.contains('hidden'))return;
  const input=$('conflictSearch'),target=e.target;
  if(target===input)return;
- if(target&&/^(BUTTON|INPUT|SELECT|TEXTAREA)$/.test(target.tagName||''))return;
+ if(target&&/^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName||''))return;
  if(e.key==='Enter'||e.key==='Tab'){
   e.preventDefault();clearTimeout(conflictScan.timer);
   conflictScan.timer=setTimeout(()=>void verifyConflictScan(),input.value?120:460);
@@ -653,6 +665,33 @@ $('cameraBtn').onclick=async()=>{try{if(!('BarcodeDetector'in window))throw Erro
 }catch(err){message(err.message,'bad');stopCamera();}};
 $('cameraStop').onclick=stopCamera;
 function stopCamera(){clearInterval(T.cameraTimer);T.cameraTimer=null;T.cameraStream?.getTracks().forEach(t=>t.stop());T.cameraStream=null;$('cameraBox').classList.add('hidden');}
-window.addEventListener('online',()=>{showConnection();if(T.session)sendQueue();});window.addEventListener('offline',showConnection);window.addEventListener('focus',()=>{if(T.session&&activeOnline()&&!T.sending)sendQueue();});document.addEventListener('visibilitychange',()=>{if(!document.hidden&&T.session&&activeOnline())sendQueue();});
+/* Restore wedge focus after any screen transition, app resume or toolbar touch.
+ * Only a visible scanner gets focus; forms, confirmation dialogs, and LK search retain control. */
+function restoreWedgeFocus(){
+ if(document.hidden)return;
+ if(conflictIsOpen()){
+   if($('conflictConfirmOverlay').classList.contains('hidden'))focusConflictScanner();
+ }else if(scanScreenActive())focusScanner();
+}
+function deferWedgeFocus(delay=80){
+ clearTimeout(scanIO.focusTimer);
+ scanIO.focusTimer=setTimeout(restoreWedgeFocus,delay);
+}
+document.addEventListener('focusout',e=>{
+ if(e.target===$('scanInput')||e.target===$('conflictSearch'))deferWedgeFocus(110);
+},true);
+document.addEventListener('pointerup',()=>deferWedgeFocus(100),true);
+document.addEventListener('touchend',()=>deferWedgeFocus(110),{passive:true,capture:true});
+window.addEventListener('pageshow',()=>deferWedgeFocus(130));
+window.addEventListener('focus',()=>deferWedgeFocus(130));
+window.addEventListener('online',()=>{showConnection();if(T.session)sendQueue();});
+window.addEventListener('offline',showConnection);
+window.addEventListener('focus',()=>{if(T.session&&activeOnline()&&!T.sending)sendQueue();});
+document.addEventListener('visibilitychange',()=>{
+ if(!document.hidden){
+  deferWedgeFocus(140);
+  if(T.session&&activeOnline())sendQueue();
+ }
+});
 if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(e=>console.warn('SW:',e));
 start().then(()=>window.stockflowBootReady?.()).catch(e=>{window.stockflowBootError?.(e.message);message('Ошибка инициализации IndexedDB: '+e.message,'bad');});
