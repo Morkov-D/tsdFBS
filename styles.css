@@ -74,3 +74,20 @@ input,select,textarea{font-size:16px;min-height:52px;border-radius:12px}.card la
 .warehouse-card select{font-size:16px;min-height:56px}
 @media(max-width:380px){.app .screen{padding:10px}.card{padding:14px}.scan-card #scanInput{font-size:17px}.picker-sheet{padding:12px 12px max(12px,env(safe-area-inset-bottom))}.picker-item{min-height:60px}.finish-sheet{padding:14px}}
 @media (prefers-reduced-motion:reduce){.screen-flash.flash-good,.screen-flash.flash-error{animation:none}}
+
+
+/* CHZ conflict workflow, Urovo CT48 */
+.conflict-open{display:block;margin-top:10px;padding:10px 12px;font-size:12px}
+.conflict-sheet{height:min(95dvh,800px);overflow:hidden}
+.conflict-list{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;margin:8px 0;border-top:1px solid #e4edf1}
+.conflict-row{padding:12px 9px;border-bottom:1px solid #e4edf1;display:grid;gap:7px;border-left:4px solid #e34a49;background:#fffafa}
+.conflict-row b{font-size:15px}.conflict-row small{color:#657c87;font-size:12px}
+.conflict-row code{font:12px monospace;white-space:normal;overflow-wrap:anywhere;background:#f5f2f1;padding:8px;border-radius:8px}
+.conflict-row.conflict-highlight{outline:2px solid #128a78;outline-offset:-2px}
+.conflict-heading{font-size:11px;color:#a83030;font-weight:800}
+.conflict-check{display:flex!important;align-items:flex-start;gap:10px;font-size:13px!important;font-weight:750!important;line-height:1.5;background:#fff0e5;padding:12px;border-radius:9px}
+.conflict-check input{width:22px;min-width:22px;height:22px;margin:0}
+.conflict-count{font-size:12px;color:#ba3535;margin-top:9px}
+#conflictConfirm{margin-top:8px;min-height:58px;font-size:13px}
+#conflictConfirm:disabled{background:#aab7ba;cursor:default}
+@media(max-height:630px){.conflict-sheet{height:calc(100dvh - 4px);padding:9px 11px}.conflict-row{padding:7px}.conflict-check{padding:8px}}
