@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ru" translate="no">
+<head>
+  <meta charset="utf-8">
+  <meta name="google" content="notranslate">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#123646">
+  <title>StockFlow — диагностика соединения</title>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;background:#edf3f5;color:#173346;font:15px system-ui,-apple-system,Segoe UI,sans-serif}
+    main{max-width:720px;margin:28px auto;padding:0 15px}
+    header{background:#123646;color:white;border-radius:15px;padding:20px}
+    header h1{margin:0 0 6px;font-size:23px}
+    header p{margin:0;color:#d1e3e8;font-size:13px;line-height:1.5}
+    section{background:#fff;border:1px solid #dce8eb;border-radius:15px;padding:20px;margin-top:14px}
+    h2{font-size:17px;margin:0 0 12px}
+    label{font-weight:700;display:block;margin:10px 0 7px}
+    textarea{width:100%;resize:vertical;min-height:92px;border:1px solid #b9cbd1;border-radius:10px;padding:12px;font-size:14px}
+    button,a.action{display:inline-block;background:#117b69;border:0;border-radius:10px;color:#fff;padding:13px 16px;text-decoration:none;font:700 14px system-ui;cursor:pointer}
+    button:disabled{opacity:.6;cursor:wait}
+    a.action{background:#e6eef0;color:#173346}
+    .actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px}
+    #result{white-space:pre-wrap;line-height:1.6;padding:14px;border-radius:10px;background:#f1f6f7;font-size:14px;word-break:break-word}
+    #result.ok{background:#e5f8ec;color:#126340}
+    #result.err{background:#fff0eb;color:#883728}
+    p,li{font-size:14px;line-height:1.6}
+    code{overflow-wrap:anywhere}
+  </style>
+</head>
+<body><main>
+<header><h1>StockFlow · Диагностика API</h1><p>Безопасный тест публичного JSONP подключения к Google Apps Script. Не изменяет остатки, сборки и локальную IndexedDB.</p></header>
+<section>
+  <h2>1. Адрес Apps Script</h2>
+  <label for="endpoint">Сохранённый адрес /exec</label>
+  <textarea id="endpoint" spellcheck="false" placeholder="https://script.google.com/macros/s/.../exec"></textarea>
+  <div class="actions"><button type="button" id="test">Проверить соединение</button><a class="action" id="direct" target="_blank" rel="noopener noreferrer" hidden>Открыть ответ сервера</a></div>
+</section>
+<section>
+  <h2>2. Результат проверки</h2>
+  <div id="result" role="status" aria-live="polite">Нажмите «Проверить соединение». Для теста используется заведомо неверный ID сотрудника — реальный ID вводить не нужно.</div>
+  <p>Если сервер работает, нормальный результат — <b>«Сотрудник не найден или доступ закрыт»</b>: это доказывает, что вызов <code>doGet</code> дошёл до Apps Script и вернулся по JSONP.</p>
+  <p>Если ответ не приходит, откройте его прямой ссылкой. Страница авторизации Google или сообщение о запрете доступа означает, что развёртывание не допускает анонимные запросы. Обычная HTML-страница StockFlow вместо текста <code>cb_...( ... );</code> означает, что версия <code>/exec</code> не содержит нужного API-обработчика.</p>
+  <div class="actions"><a class="action" href="./">Вернуться в ТСД</a></div>
+</section>
+</main>
+<script>
+'use strict';
+(function(){
+  const endpoint=document.getElementById('endpoint');
+  const test=document.getElementById('test');
+  const result=document.getElementById('result');
+  const direct=document.getElementById('direct');
+  endpoint.value=localStorage.getItem('stockflow_endpoint')||'';
+  let activeCleanup=null;
+  function show(text,status){
+    result.className=status||'';
+    result.textContent=text;
+  }
+  test.addEventListener('click',function(){
+    let url;
+    try{
+      url=new URL(endpoint.value.trim());
+      if(url.protocol!=='https:'||url.hostname!=='script.google.com'||!/^\/macros\/s\/[^/]+\/exec$/.test(url.pathname)){
+        throw Error('Укажите адрес опубликованного веб-приложения script.google.com/macros/s/.../exec');
+      }
+    }catch(e){show(e.message,'err');return;}
+    if(activeCleanup)activeCleanup();
+    const callback='cb_test_'+Date.now().toString(36);
+    url.searchParams.set('api','tsd');
+    url.searchParams.set('op','login');
+    url.searchParams.set('employeeId','__STOCKFLOW_DIAG_INVALID__');
+    url.searchParams.set('callback',callback);
+    direct.href=url.toString();
+    direct.hidden=false;
+    const script=document.createElement('script');
+    let completed=false;
+    test.disabled=true;
+    show('Проверяем доступность Apps Script и корректность JSONP…');
+    function finish(message,status){
+      if(completed)return;
+      completed=true;
+      clearTimeout(timer);
+      try{delete window[callback]}catch(_){window[callback]=undefined}
+      script.remove();
+      test.disabled=false;
+      activeCleanup=null;
+      show(message,status);
+    }
+    activeCleanup=()=>{
+      completed=true;
+      clearTimeout(timer);
+      try{delete window[callback]}catch(_){window[callback]=undefined}
+      script.remove();
+      test.disabled=false;
+    };
+    const timer=setTimeout(()=>finish('Тайм-аут: за 20 секунд JSONP не пришёл. Откройте «Ответ сервера» и проверьте доступность /exec.','err'),20000);
+    window[callback]=function(data){
+      const json=JSON.stringify(data,null,2);
+      if(data&&data.ok===false){
+        finish('Сервер ответил корректным JSONP. Это подтверждает доступность API.\n\nОтвет: '+json,'ok');
+      }else if(data&&data.ok===true){
+        finish('Сервер ответил по JSONP (ok:true). Проверка соединения успешна.\n\nОтвет: '+json,'ok');
+      }else{
+        finish('Получен JSONP с неожиданным форматом:\n'+json,'err');
+      }
+    };
+    script.onerror=()=>finish('Браузер не смог загрузить ответ Apps Script как JavaScript. Возможны запрет доступа, недоступность скрипта, ошибка сервера или блокировка сети. Откройте прямой ответ сервера.','err');
+    script.onload=()=>{if(!completed)finish('Скрипт загрузился, но не вызвал callback. Возможно, вместо JSONP сервер вернул HTML или опубликована старая версия doGet(e). Откройте ответ сервера.','err');};
+    script.src=url.toString();
+    document.head.appendChild(script);
+  });
+})();
+</script>
+</body></html>
