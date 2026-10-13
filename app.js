@@ -3,7 +3,7 @@ const T={endpoint:'',session:null,employee:null,catalog:{lks:[],warehouses:[],pr
 const $=id=>document.getElementById(id);
 function stage(label,percent){const box=$('workProgress');box.classList.remove('hidden');$('workProgressLabel').textContent=label;$('workProgressValue').textContent=percent==null?'Синхронизация…':percent+'%';$('workProgressFill').style.width=percent==null?'35%':percent+'%';$('workProgressFill').classList.toggle('moving',percent==null);}
 function stageEnd(){const box=$('workProgress');if(box)box.classList.add('hidden');}
-function buildIndexes(){T.byId=new Map();T.byBarcode=new Map();(T.catalog.products||[]).forEach(p=>{T.byId.set(p.uuid,p);(p.barcodes||[]).forEach(code=>{const key=p.lkId+'|'+String(code);const arr=T.byBarcode.get(key)||[];arr.push(p);T.byBarcode.set(key,arr);});});T.scanCodes=new Set(T.draft?.scans?.map(x=>x.dm)||[]);}
+function buildIndexes(){T.byId=new Map();T.byBarcode=new Map();(T.catalog.products||[]).forEach(p=>{T.byId.set(p.uuid,p);(p.barcodes||[]).forEach(code=>{const key=String(code).trim();const arr=T.byBarcode.get(key)||[];arr.push(p);T.byBarcode.set(key,arr);});});T.scanCodes=new Set(T.draft?.scans?.map(x=>x.dm)||[]);}
 
 function focusScanner() {
   if(!T.draft || document.hidden || $('assemblyView').classList.contains('hidden')
@@ -262,9 +262,9 @@ async function acceptScan(value){if(T.scanBusy)return;T.scanBusy=true;try{
  let feedbackText='';
   if(!T.draft)throw Error('Нет активной сборки');const val=String(value||'').trim();if(!val)throw Error('Пустой скан');
   if(T.draft.stage==='barcode'){
-    const candidates=T.byBarcode.get(T.draft.lkId+'|'+val)||[];
-    if(!candidates.length)throw Error('Штрихкод не найден в выбранном ЛК: '+val);
-    if(candidates.length>1)throw Error('Штрихкод неоднозначен. Проверьте справочник.');
+    const candidates=T.byBarcode.get(val)||[];
+    if(!candidates.length)throw Error('Штрихкод не найден в общем каталоге: '+val);
+    if(candidates.length>1)throw Error('Штрихкод привязан к нескольким товарам. Исправьте общий каталог.');
     T.draft.pendingProductId=candidates[0].uuid;T.draft.stage='dm';feedbackText='ШК верный · '+candidates[0].article;
   }else{
     const p=T.byId.get(T.draft.pendingProductId);if(!p)throw Error('Сначала сканируйте ШК товара');
@@ -326,7 +326,7 @@ async function syncCatalog(force=false){
    if(part.nextPage===null)break;
    page=part.nextPage;if(page>10000)throw Error('Слишком много страниц справочника');
   }
-  const snapshot={lks,warehouses,products,version,savedAt:new Date().toISOString()};
+  const snapshot={lks,warehouses,products,version,savedAt:new Date().toISOString(),schema:'unified-v4'};
   await DB.replaceCatalog(snapshot);T.catalog=snapshot;buildIndexes();return true;
  }finally{stageEnd();}
 }
