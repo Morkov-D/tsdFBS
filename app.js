@@ -3,7 +3,20 @@ const T={endpoint:'',session:null,employee:null,catalog:{lks:[],warehouses:[],pr
 const $=id=>document.getElementById(id);
 function stage(label,percent){const box=$('workProgress');box.classList.remove('hidden');$('workProgressLabel').textContent=label;$('workProgressValue').textContent=percent==null?'Синхронизация…':percent+'%';$('workProgressFill').style.width=percent==null?'35%':percent+'%';$('workProgressFill').classList.toggle('moving',percent==null);}
 function stageEnd(){const box=$('workProgress');if(box)box.classList.add('hidden');}
-function buildIndexes(){T.byId=new Map();T.byBarcode=new Map();(T.catalog.products||[]).forEach(p=>{T.byId.set(p.uuid,p);(p.barcodes||[]).forEach(code=>{const key=String(code).trim();const arr=T.byBarcode.get(key)||[];arr.push(p);T.byBarcode.set(key,arr);});});T.scanCodes=new Set(T.draft?.scans?.map(x=>x.dm)||[]);}
+function productNeedsCHZ(p){return p?.requiresCHZ===undefined||p?.requiresCHZ===null||p?.requiresCHZ===''?!!p?.gtin:(p.requiresCHZ===true||p.requiresCHZ==='1');}
+function buildIndexes(){
+ T.byId=new Map();T.byBarcode=new Map();
+ (T.catalog.products||[]).forEach(p=>{
+  T.byId.set(p.uuid,p);
+  const keys=[p.articleCode,p.gtin,...(p.barcodes||[])].filter(Boolean);
+  keys.forEach(code=>{
+   const key=String(code).trim().toLowerCase(),arr=T.byBarcode.get(key)||[];
+   if(!arr.some(x=>x.uuid===p.uuid))arr.push(p);
+   T.byBarcode.set(key,arr);
+  });
+ });
+ T.scanCodes=new Set((T.draft?.scans||[]).map(x=>x.dm).filter(Boolean));
+}
 
 function focusScanner() {
   if(!T.draft || document.hidden || $('assemblyView').classList.contains('hidden')
@@ -157,7 +170,7 @@ function renderAssembly(){if(!T.draft)return;const lk=T.catalog.lks.find(x=>x.uu
   $('assemblyCount').textContent=codes.length+' шт.';$('scanStageCount').textContent=stage==='barcode'?'01 / 02':'02 / 02';
   $('scanTitle').textContent=stage==='barcode'?'Штрихкод товара':'DataMatrix ЧЗ';
   const product=T.byId.get(T.draft.pendingProductId);
-  $('scanHelp').textContent=stage==='barcode'?'Сканируйте ШК сразу — ввод и переход к ЧЗ автоматические.':`Товар: ${product?.article||'Не найден'}. Отсканируйте код ЧЗ.`;
+  $('scanHelp').textContent=stage==='barcode'?'Сканируйте ШК или артикул. Обычный товар принимается сразу, маркируемый — после ЧЗ.':`Товар: ${product?.article||'Не найден'}. Отсканируйте код ЧЗ.`;
   $('scanInput').value='';$('scanInput').placeholder=stage==='barcode'?'ШК товара…':'GS1 DataMatrix…';$('scanTargetLabel').textContent=stage==='barcode'?'Ожидание штрихкода':'Ожидание DataMatrix ЧЗ';$('scanCard').dataset.stage=stage;
   $('scanStepOne').classList.toggle('done',stage==='dm');$('scanStepTwo').classList.toggle('active',stage==='dm');
   const ag={};codes.forEach(s=>{ag[s.productId]=(ag[s.productId]||0)+1;});const entries=Object.entries(ag);$('scanSummary').textContent=entries.length+' артикулов';
@@ -262,15 +275,23 @@ async function acceptScan(value){if(T.scanBusy)return;T.scanBusy=true;try{
  let feedbackText='';
   if(!T.draft)throw Error('Нет активной сборки');const val=String(value||'').trim();if(!val)throw Error('Пустой скан');
   if(T.draft.stage==='barcode'){
-    const candidates=T.byBarcode.get(val)||[];
+    const candidates=T.byBarcode.get(val.toLowerCase())||[];
     if(!candidates.length)throw Error('Штрихкод не найден в общем каталоге: '+val);
     if(candidates.length>1)throw Error('Штрихкод привязан к нескольким товарам. Исправьте общий каталог.');
-    T.draft.pendingProductId=candidates[0].uuid;T.draft.stage='dm';feedbackText='ШК верный · '+candidates[0].article;
+    const p=candidates[0];
+    if(productNeedsCHZ(p)){
+      T.draft.pendingProductId=p.uuid;T.draft.stage='dm';
+      feedbackText='ШК верный · '+p.article+' · Отсканируйте ЧЗ';
+    }else{
+      T.draft.scans.push({productId:p.uuid,barcode:val,dm:'',gtin:''});
+      T.draft.pendingProductId=null;T.draft.stage='barcode';
+      feedbackText='Обычный товар принят без ЧЗ · '+p.article+' · Всего '+T.draft.scans.length+' шт.';
+    }
   }else{
     const p=T.byId.get(T.draft.pendingProductId);if(!p)throw Error('Сначала сканируйте ШК товара');
     const dm=parseDM(val);if(dm.gtin!==p.gtin)throw Error('GTIN ЧЗ '+dm.gtin+' не совпадает с товаром ('+p.gtin+')');
     if(T.scanCodes.has(dm.raw))throw Error('Этот ЧЗ уже отсканирован в текущей сборке');
-    T.draft.scans.push({productId:p.uuid,barcode:p.barcodes[0],dm:dm.raw,gtin:dm.gtin});T.scanCodes.add(dm.raw);T.draft.pendingProductId=null;T.draft.stage='barcode';
+    T.draft.scans.push({productId:p.uuid,barcode:p.barcodes?.[0]||p.articleCode,dm:dm.raw,gtin:dm.gtin});T.scanCodes.add(dm.raw);T.draft.pendingProductId=null;T.draft.stage='barcode';
     feedbackText='ЧЗ принят · '+p.article+' · Всего '+T.draft.scans.length+' шт.';
   }
   await DB.put('draft','current',T.draft);renderAssembly();scanSignal(true,feedbackText);
@@ -300,8 +321,20 @@ $('finishOverlay').addEventListener('click',e=>{if(e.target===$('finishOverlay')
 $('confirmFinish').onclick=()=>busy($('confirmFinish'),async()=>{
   if(!T.draft||T.draft.stage!=='barcode'||!T.draft.scans.length)throw Error('Сборка не готова к закрытию');
   const id=crypto.randomUUID(),byProduct=new Map();
-  T.draft.scans.forEach(s=>{if(!byProduct.has(s.productId))byProduct.set(s.productId,[]);byProduct.get(s.productId).push(s.dm);});
-  const job={jobId:id,employeeId:T.employee.id,lkId:T.draft.lkId,warehouseId:T.draft.warehouseId,items:[...byProduct].map(([productId,codes])=>({productId,qty:codes.length,codes})),qty:T.draft.scans.length,createdAt:new Date().toISOString(),status:'QUEUED',message:''};
+  T.draft.scans.forEach(s=>{
+    if(!byProduct.has(s.productId))byProduct.set(s.productId,{qty:0,codes:[]});
+    const group=byProduct.get(s.productId);
+    group.qty++;
+    if(s.dm)group.codes.push(s.dm);
+  });
+  const items=[...byProduct].map(([productId,g])=>({productId,qty:g.qty,codes:g.codes}));
+  for(const item of items){
+    const p=T.byId.get(item.productId);
+    if(!p)throw Error('Товар отсутствует в справочнике. Обновите его.');
+    if(productNeedsCHZ(p)&&item.codes.length!==item.qty)throw Error('Недостаточно ЧЗ для маркируемого товара '+p.article);
+    if(!productNeedsCHZ(p)&&item.codes.length)throw Error('У обычного товара неожиданно появились ЧЗ: '+p.article);
+  }
+  const job={jobId:id,employeeId:T.employee.id,lkId:T.draft.lkId,warehouseId:T.draft.warehouseId,items,qty:T.draft.scans.length,createdAt:new Date().toISOString(),status:'QUEUED',message:''};
   await DB.commitAssembly(job);
   T.draft=null;T.queue=await DB.all('queue');$('finishOverlay').classList.add('hidden');
   stopCamera();view('homeView');renderHome();
@@ -326,7 +359,7 @@ async function syncCatalog(force=false){
    if(part.nextPage===null)break;
    page=part.nextPage;if(page>10000)throw Error('Слишком много страниц справочника');
   }
-  const snapshot={lks,warehouses,products,version,savedAt:new Date().toISOString(),schema:'unified-v4'};
+  const snapshot={lks,warehouses,products,version,savedAt:new Date().toISOString(),schema:'unified-v5.1'};
   await DB.replaceCatalog(snapshot);T.catalog=snapshot;buildIndexes();return true;
  }finally{stageEnd();}
 }
@@ -587,8 +620,11 @@ async function finalizeConfirmedConflicts(jobId){
   throw Error('Не все конфликтные ЧЗ проверены. Остаток сборки не отправлен.');
  }
  const drop=new Set(verified.map(conflictKey));
- const items=job.items.map((item,i)=>({...item,codes:item.codes.filter((_,j)=>!drop.has(i+'|'+j))}))
-   .filter(item=>item.codes.length).map(item=>({...item,qty:item.codes.length}));
+ const items=job.items.map((item,i)=>{
+   const p=T.byId.get(item.productId);
+   const codes=item.codes.filter((_,j)=>!drop.has(i+'|'+j));
+   return {...item,codes,qty:productNeedsCHZ(p)?codes.length:Number(item.qty)};
+  }).filter(item=>item.qty>0);
  const count=items.reduce((n,item)=>n+item.qty,0);
  const newJob=count?{jobId:crypto.randomUUID(),employeeId:T.employee.id,
    lkId:job.lkId,warehouseId:job.warehouseId,items,qty:count,
