@@ -128,3 +128,13 @@ input,select,textarea{font-size:16px;min-height:52px;border-radius:12px}.card la
 .scanner-form.manual-mode #scanInput,.conflict-receiver.manual-mode #conflictSearch{display:block!important}
 .conflict-receiver{position:relative}.conflict-target{min-height:70px;font-size:14px;font-weight:800}
 #manualKeyboard{margin-top:10px}
+
+
+/* Assembly cancellation: intentional destructive action, guarded dialog */
+.cancel-assembly-btn{width:100%;min-height:48px;margin:12px 0 8px;border:1px solid #edc0c0;border-radius:11px;background:#fff3f1;color:#b22b2b;font:750 13px inherit;cursor:pointer}
+.cancel-assembly-btn:active{background:#ffe4e0}
+.cancel-assembly-sheet h2{margin:12px 0 5px}
+.cancel-assembly-icon{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;background:#ffebeb;color:#b72e2e;font-size:25px;font-weight:900}
+.cancel-assembly-warning{font-size:12px;line-height:1.5;color:#a22a2a;background:#fff3eb;border:1px solid #f1c5a5;border-radius:10px;padding:11px}
+.cancel-assembly-confirm{background:#b73336;color:#fff;border:1px solid #b73336;border-radius:10px;padding:12px 8px;min-height:52px;font:750 13px inherit;cursor:pointer}
+.cancel-assembly-confirm:disabled{opacity:.5}
