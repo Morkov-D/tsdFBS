@@ -115,6 +115,37 @@ window.DB = (() => {
     });
   }
 
+  /**
+   * Cancel ONLY the active, unsubmitted draft. Verify identity within one IDB
+   * transaction to avoid deleting another draft after a stale confirmation.
+   * Queued and submitted jobs remain completely untouched.
+   */
+  async function cancelDraft(expected) {
+    if (!expected || !expected.createdAt || !expected.lkId || !expected.warehouseId)
+      throw new Error('Не удалось определить отменяемую сборку');
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('draft', 'readwrite');
+      const store = tx.objectStore('draft');
+      let failure = null;
+      const read = store.get('current');
+      read.onsuccess = () => {
+        const actual = read.result && read.result.value;
+        if (!actual || actual.createdAt !== expected.createdAt ||
+            actual.lkId !== expected.lkId || actual.warehouseId !== expected.warehouseId) {
+          failure = new Error('Текущая сборка была изменена на другом экране. Обновите приложение и проверьте черновик.');
+          tx.abort();
+          return;
+        }
+        store.delete('current');
+      };
+      read.onerror = () => { failure = read.error || new Error('Не удалось прочитать черновик'); tx.abort(); };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(failure || tx.error || new Error('Ошибка IndexedDB'));
+      tx.onabort = () => reject(failure || tx.error || new Error('Не удалось отменить сборку'));
+    });
+  }
+
   /** Atomically archive the rejected job and enqueue a corrected replacement.
    * Never delete original error history; never touch the active assembly draft.
    */
@@ -150,5 +181,5 @@ window.DB = (() => {
     });
   }
 
-  return { open, get, all, put, del, replaceCatalog, commitAssembly, resolveConflict };
+  return { open, get, all, put, del, replaceCatalog, commitAssembly, cancelDraft, resolveConflict };
 })();
