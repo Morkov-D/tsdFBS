@@ -23,7 +23,8 @@ function focusScanner() {
     || !$('pickerOverlay').classList.contains('hidden')
     || !$('finishOverlay').classList.contains('hidden')
     || !$('conflictOverlay').classList.contains('hidden')
-    || !$('conflictConfirmOverlay').classList.contains('hidden')) return;
+    || !$('conflictConfirmOverlay').classList.contains('hidden')
+    || !$('cancelAssemblyOverlay').classList.contains('hidden')) return;
   const input=$('scanInput');
   if(document.activeElement!==input){try{input.focus({preventScroll:true});}catch(_){input.focus();}}
   if(document.activeElement===input && $('scanFocusStatus')){
@@ -191,7 +192,8 @@ function scanScreenActive(){
     && $('pickerOverlay').classList.contains('hidden')
     && $('finishOverlay').classList.contains('hidden')
     && $('conflictOverlay').classList.contains('hidden')
-    && $('conflictConfirmOverlay').classList.contains('hidden');
+    && $('conflictConfirmOverlay').classList.contains('hidden')
+    && $('cancelAssemblyOverlay').classList.contains('hidden');
 }
 function clearScanTimers(){
   clearTimeout(scanIO.inputTimer);
@@ -298,6 +300,52 @@ async function acceptScan(value){if(T.scanBusy)return;T.scanBusy=true;try{
 }catch(err){scanSignal(false,err.message);message(err.message,'bad');focusScanner();$('scanInput').select();}finally{T.scanBusy=false;if(scanIO.pending.length){const next=scanIO.pending.shift();Promise.resolve().then(()=>acceptScan(next));}}}
 $('backHome').onclick=()=>{stopCamera();view('homeView');renderHome();if(T.draft)message('Незакрытая сборка сохранена локально. Нажмите «Вернуться к сборке», чтобы продолжить.','');};
 
+let cancellingDraft=false;
+$('cancelAssembly').onclick=()=>{
+ if(cancellingDraft||T.scanBusy)return message('Дождитесь завершения текущего сканирования и повторите отмену.','bad');
+ if(!T.draft)return message('Активной сборки нет.','bad');
+ clearScanTimers();
+ const draft=T.draft,lk=T.catalog.lks.find(x=>x.uuid===draft.lkId),
+       warehouse=T.catalog.warehouses.find(x=>x.uuid===draft.warehouseId);
+ $('cancelAssemblySummary').innerHTML=
+  '<div><span>Личный кабинет</span><b>'+escapeHtml(lk?.name||'—')+'</b></div>'+
+  '<div><span>Юридическое лицо</span><b>'+escapeHtml(lk?.legalEntity||'—')+'</b></div>'+
+  '<div><span>Склад</span><b>'+escapeHtml(warehouse?.name||'—')+'</b></div>'+
+  '<div><span>Отсканировано</span><b>'+draft.scans.length+' шт.</b></div>';
+ $('cancelAssemblyOverlay').classList.remove('hidden');
+ setViewportSheet();
+};
+$('keepAssembly').onclick=()=>{
+ if(cancellingDraft)return;
+ $('cancelAssemblyOverlay').classList.add('hidden');
+ requestAnimationFrame(focusScanner);
+};
+$('cancelAssemblyOverlay').addEventListener('click',e=>{
+ if(e.target===$('cancelAssemblyOverlay'))$('keepAssembly').click();
+});
+$('confirmCancelAssembly').onclick=async()=>{
+ if(cancellingDraft)return;
+ if(T.scanBusy)return message('Сканирование ещё выполняется. Попробуйте снова.','bad');
+ if(!T.draft)return message('Сборка уже отсутствует.','bad');
+ cancellingDraft=true;
+ const btn=$('confirmCancelAssembly');btn.disabled=true;
+ const expected={createdAt:T.draft.createdAt,lkId:T.draft.lkId,warehouseId:T.draft.warehouseId};
+ try{
+  await DB.cancelDraft(expected);
+  clearScanTimers();scanIO.pending.length=0;T.scanCodes.clear();
+  T.draft=null;
+  stopCamera();
+  $('scanInput').value='';
+  $('cancelAssemblyOverlay').classList.add('hidden');
+  view('homeView');renderHome();
+  haptic([60,40,90]);
+  message('Сборка отменена. Черновик удалён; выберите правильный ЛК и начните новую сборку.');
+ }catch(e){
+  message('Не удалось отменить сборку: '+e.message,'bad');
+ }finally{
+  cancellingDraft=false;btn.disabled=false;
+ }
+};
 $('finishAssembly').onclick=()=>{
   armAudio();
   try{
